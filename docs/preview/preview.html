@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0a0a0d;
+    --line: #26262c;
+    --text: #e6e6ea;
+    --muted: #9c9ca4;
+    --radio: #f0a13c;
+    --tv: #5b8cff;
+    --youtube: #ff4a4a;
+    --music: #d24bd8;
+    --local: #3fc98a;
+    --podcast: #2ec4b6;
+    --aurora: linear-gradient(90deg, #2ec4b6 0%, #5b8cff 35%, #d24bd8 68%, #f0a13c 100%);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 2000px; height: 1250px; }
+  body {
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    color: var(--text);
+    padding: 58px 56px 0;
+    background:
+      radial-gradient(900px 420px at 12% -10%, rgba(46, 196, 182, 0.20), transparent 70%),
+      radial-gradient(900px 420px at 50% -16%, rgba(91, 140, 255, 0.16), transparent 70%),
+      radial-gradient(900px 460px at 92% -8%, rgba(210, 75, 216, 0.18), transparent 70%),
+      radial-gradient(1100px 500px at 100% 110%, rgba(240, 161, 60, 0.08), transparent 70%),
+      var(--bg);
+  }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 40px; }
+  .brand { display: flex; align-items: center; gap: 28px; }
+  .icon {
+    width: 108px; height: 108px; border-radius: 26px; display: grid; place-items: center;
+    background: var(--aurora); box-shadow: 0 16px 40px rgba(91, 140, 255, 0.25);
+  }
+  .icon svg { width: 66px; height: 66px; }
+  h1 {
+    font-size: 84px; font-weight: 800; letter-spacing: -2px; line-height: 1;
+    background: var(--aurora); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tagline { margin-top: 14px; font-size: 27px; color: var(--muted); }
+  .tagline b { color: var(--text); font-weight: 600; }
+
+  .sources { display: grid; grid-template-columns: repeat(3, auto); gap: 12px; }
+  .src {
+    display: flex; align-items: center; gap: 10px; font-size: 20px; padding: 9px 15px;
+    border: 1.5px solid color-mix(in srgb, var(--c) 55%, transparent);
+    background: color-mix(in srgb, var(--c) 10%, transparent);
+    border-radius: 8px; color: var(--text); white-space: nowrap;
+  }
+  .src i { font-style: normal; color: var(--c); font-size: 22px; }
+  .src small { color: var(--muted); font-size: 16px; }
+
+  .stage { display: grid; grid-template-columns: repeat(3, 450px) 1fr; gap: 30px; margin-top: 46px; }
+  .cap { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; white-space: nowrap; }
+  .cap b { font-size: 22px; letter-spacing: 3px; color: var(--c); }
+  .cap span { font-size: 18px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  .shot {
+    display: block; width: 100%; border-radius: 6px;
+    box-shadow: 0 28px 56px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+  .panel { height: 670px; object-fit: cover; object-position: top; }
+  .side { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  .card {
+    border-radius: 8px; overflow: hidden; background: #121214;
+    box-shadow: 0 24px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  .card img { display: block; width: 100%; }
+  .video { position: relative; }
+  .video .badge {
+    position: absolute; top: 210px; left: 12px; font-size: 15px; padding: 5px 10px; border-radius: 6px;
+    background: rgba(0, 0, 0, 0.65); color: #fff; letter-spacing: 1px;
+  }
+  .video .badge i { font-style: normal; color: var(--youtube); }
+
+  .features {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px 34px;
+    margin-top: 40px; padding-top: 30px; border-top: 1.5px solid var(--line);
+  }
+  .f { display: flex; gap: 16px; align-items: flex-start; }
+  .f i { font-style: normal; font-size: 30px; flex: 0 0 40px; text-align: center; line-height: 1.15; color: var(--c); }
+  .f b { display: block; font-size: 22px; margin-bottom: 5px; }
+  .f p { font-size: 17.5px; color: var(--muted); line-height: 1.4; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="icon">
+        <svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 34h10l6-14 9 30 9-38 8 28 5-6h9"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Aurora Pulse</h1>
+        <p class="tagline">Everything you listen to and watch, <b>in one Omarchy bar widget.</b></p>
+      </div>
+    </div>
+    <div class="sources">
+      <span class="src" style="--c: var(--radio)"><i>󰐹</i>Radio <small>60k stations</small></span>
+      <span class="src" style="--c: var(--tv)"><i>󰔂</i>TV <small>11k channels</small></span>
+      <span class="src" style="--c: var(--youtube)"><i>󰗃</i>YouTube</span>
+      <span class="src" style="--c: var(--music)"><i>󰝚</i>YouTube Music</span>
+      <span class="src" style="--c: var(--podcast)"><i>󰦔</i>Podcasts</span>
+      <span class="src" style="--c: var(--local)"><i>󰉋</i>Your library</span>
+    </div>
+  </header>
+
+  <section class="stage">
+    <figure>
+      <div class="cap" style="--c: var(--radio)"><b>LISTEN</b><span>live radio, now playing</span></div>
+      <img class="shot panel" src="radio.png">
+    </figure>
+    <figure>
+      <div class="cap" style="--c: var(--youtube)"><b>BROWSE</b><span>YouTube in a grid</span></div>
+      <img class="shot panel" src="youtube-grid.png">
+    </figure>
+    <figure>
+      <div class="cap" style="--c: var(--music)"><b>SING</b><span>synced lyrics</span></div>
+      <img class="shot panel" src="lyrics.png">
+    </figure>
+    <div class="side">
+      <div>
+        <div class="cap" style="--c: var(--youtube)"><b>WATCH</b><span>picture-in-picture</span></div>
+        <div class="card video">
+          <img src="video.png">
+          <span class="badge"><i>●</i> PINNED · ANY CORNER</span>
+          <img src="video-controls.png">
+        </div>
+      </div>
+      <div>
+        <div class="cap" style="--c: var(--tv)"><b>GUIDE</b><span>what's on now and next</span></div>
+        <div class="card"><img src="guide.png"></div>
+      </div>
+      <div>
+        <div class="cap" style="--c: var(--local)"><b>HEALTH</b><span>checks its own setup</span></div>
+        <div class="card"><img src="health.png" style="height: 138px; object-fit: cover; object-position: top;"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="f" style="--c: var(--radio)"><i>󰐑</i><div><b>One queue</b><p>Mix any source; it survives reboots. Playlists that fill themselves.</p></div></div>
+    <div class="f" style="--c: var(--youtube)"><i>󰊚</i><div><b>Floating video</b><p>Four sizes, pin, full screen, subtitles, hardware decoding.</p></div></div>
+    <div class="f" style="--c: var(--music)"><i>󰓃</i><div><b>Sound</b><p>EQ presets or five bands, loudness, crossfade, skip silence.</p></div></div>
+    <div class="f" style="--c: var(--tv)"><i>󰐾</i><div><b>Play on…</b><p>Speakers, Bluetooth, or a TV over DLNA and Chromecast.</p></div></div>
+    <div class="f" style="--c: var(--local)"><i>󰇚</i><div><b>Download &amp; record</b><p>MP3, FLAC, MP4 and more; record live radio and TV.</p></div></div>
+    <div class="f" style="--c: var(--podcast)"><i>󰒲</i><div><b>Sleep &amp; alarm</b><p>Fade out to sleep; wake up to a station fading in.</p></div></div>
+    <div class="f" style="--c: var(--tv)"><i>󰒃</i><div><b>Sandboxed</b><p>Player and parsers run in bubblewrap. No account, no telemetry.</p></div></div>
+    <div class="f" style="--c: var(--radio)"><i>󰌌</i><div><b>Keys &amp; MPRIS</b><p>Full keyboard control, media keys, lock screen, scrobbling.</p></div></div>
+  </section>
+</body>
+</html>

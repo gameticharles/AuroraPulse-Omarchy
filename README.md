@@ -4,6 +4,8 @@ Radio, TV, YouTube, YouTube Music, podcasts and your own music and videos in
 one bar widget: one queue, one set of controls, a picture-in-picture video
 window, synced lyrics and a TV guide.
 
+![Aurora Pulse: radio, YouTube, synced lyrics, picture-in-picture video and the TV guide](preview.png)
+
 Everything that touches the network or decodes media runs in a bubblewrap
 sandbox. The widget itself only renders JSON from a daemon.
 
@@ -180,3 +182,7 @@ omarchy-restart-shell                      # after QML changes: the shell caches
   playlist links instead.
 - Scrobbling sends what you play to ListenBrainz or Last.fm only when you
   turn it on and give it a token.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
