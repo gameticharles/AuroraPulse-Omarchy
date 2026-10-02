@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""ap-ctl - the AuroraPulse control binary.
+
+The single executable the plugin uses. Its subcommands are also what the
+sandbox execs, so the path to this file is the one thing the bubblewrap
+command line depends on; it is passed in as an inherited file descriptor when
+that is possible, and never as a string the sandbox could rewrite.
+
+    ap-ctl daemon                 the long-lived service, JSON on stdio
+    ap-ctl session RUNTIME ...    the player session; owns one mpv
+    ap-ctl sandbox PROXY FD ...   exec'd *inside* bubblewrap
+    ap-ctl selftest               prove the environment can run us
+"""
+
+import os
+import sys
+
+# Never write .pyc files. This plugin lives in ~/.config/omarchy/plugins/,
+# which the shell watches for changes, so Python caching its own bytecode here
+# looks exactly like an edit to the plugin. The moment a new process imported a
+# module it had not imported before, a __pycache__ directory would appear in
+# the plugin and the shell would tear itself down and come back - which is why
+# selecting a station made the whole bar restart. It set in on the first play
+# after any daemon start, and again for every module not yet seen.
+#
+# The bytecode cache bought nothing anyway: the daemon and the player session
+# are long-lived, and a cold start imports a few dozen modules in milliseconds.
+sys.dont_write_bytecode = True
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SRC = os.path.join(_HERE, "src")
+if os.path.isdir(os.path.join(_SRC, "apctl")):
+    sys.path.insert(0, _SRC)
+
+try:
+    from apctl.core import daemon
+except ImportError as exc:  # pragma: no cover - a broken install
+    print("ap-ctl: cannot load the AuroraPulse package from %s (%s)"
+          % (_SRC, exc), file=sys.stderr)
+    raise SystemExit(70)
+
+if __name__ == "__main__":
+    raise SystemExit(daemon.main(sys.argv[1:]))

@@ -1,0 +1,16 @@
+# AuroraPulse settings primitives. A directory module rather than loose files,
+# because a QML type cannot import a sibling .qml by path and get its type
+# registered; siblings in a module with a qmldir resolve by name.
+module AuroraPulse.Components
+RowBase 1.0 RowBase.qml
+ToggleRow 1.0 ToggleRow.qml
+SliderRow 1.0 SliderRow.qml
+ChoiceRow 1.0 ChoiceRow.qml
+ActionRow 1.0 ActionRow.qml
+InfoRow 1.0 InfoRow.qml
+SectionHeader 1.0 SectionHeader.qml
+InputField 1.0 InputField.qml
+TextBox 1.0 TextBox.qml
+Button 1.0 Button.qml
+NavRow 1.0 NavRow.qml
+ItemRow 1.0 ItemRow.qml

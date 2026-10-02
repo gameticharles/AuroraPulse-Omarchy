@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "id": "aurora-pulse",
+  "name": "Aurora Pulse",
+  "version": "1.0.0",
+  "author": "Charles Gameti",
+  "license": "MIT",
+  "description": "Radio, TV, YouTube, YouTube Music and local music in one bar widget: unified queue, picture-in-picture video with pinning, synced lyrics, EPG guide, 5-band EQ and crossfade.",
+  "homepage": "https://github.com/aurorapulse/omarchy-aurora-pulse",
+  "repository": "https://github.com/aurorapulse/omarchy-aurora-pulse",
+  "keywords": [
+    "media",
+    "music",
+    "radio",
+    "tv",
+    "youtube",
+    "youtube-music",
+    "ip.tv",
+    "mpris",
+    "player",
+    "picture-in-picture",
+    "bar-widget"
+  ],
+  "kinds": [
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Aurora Pulse",
+    "description": "Radio, TV, YouTube, YouTube Music and local music with picture-in-picture video",
+    "category": "Media",
+    "aliases": [
+      "media",
+      "music",
+      "radio",
+      "tv",
+      "youtube",
+      "player",
+      "audio",
+      "video"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "showTitle": true,
+      "maxTitleWidth": 180,
+      "showSourceBadge": true,
+      "showPipBadge": true,
+      "defaultSource": "radio",
+      "audioOnlyYouTube": false,
+      "crossfadeSec": 0,
+      "playbackSpeed": 1.0,
+      "skipSilence": false,
+      "preventDuplicates": true,
+      "resumePlayback": true,
+      "volume": 70,
+      "rememberVolumePerDevice": true,
+      "equalizerEnabled": false,
+      "eqPreset": "Flat",
+      "defaultQuality": "720p",
+      "pipSize": "m",
+      "pipCorner": "br",
+      "defaultAspect": "auto",
+      "autoHideControlsMs": 3000,
+      "hardwareDecode": true,
+      "minBitrate": 0,
+      "reportPlays": true,
+      "autoSyncHours": 24,
+      "epgUrl": "",
+      "epgRefreshHours": 12,
+      "ytResolutionBudgetPerHour": 120,
+      "ytSearchResults": 20,
+      "useYtLyrics": true,
+      "lyricsProviders": "lrclib,azlyrics,sidecar",
+      "scanRoots": "",
+      "requestTimeoutSec": 20,
+      "offlineMode": false,
+      "sendPlaysToDirectory": true,
+      "notifyTrackChange": false,
+      "autoPlay": false,
+      "radioSyncHours": 24,
+      "tvSyncHours": 24,
+      "tvBufferSec": 20,
+      "tvUserAgent": "AuroraPulse/0.1 (Omarchy)",
+      "tvHideGeoBlocked": true,
+      "tvHideNot247": true,
+      "tvHideNsfw": true,
+      "tvOpenDefaultMuted": false,
+      "localFollowSymlinks": false,
+      "artwork": true,
+      "artworkConcurrency": 6,
+      "showBitrate": true,
+      "showCountry": true
+    },
+    "schema": [
+      {
+        "key": "showTitle",
+        "type": "boolean",
+        "label": "Show the title in the bar",
+        "defaultValue": true,
+        "description": "The bar shows the artist and title beside the icon. Turn it off for an icon-only widget."
+      },
+      {
+        "key": "maxTitleWidth",
+        "type": "integer",
+        "label": "Title width",
+        "min": 60,
+        "max": 600,
+        "step": 10,
+        "defaultValue": 180,
+        "description": "In the shell's spacing units. Longer titles scroll."
+      },
+      {
+        "key": "showSourceBadge",
+        "type": "boolean",
+        "label": "Show which source is playing",
+        "defaultValue": true,
+        "description": "Radio, TV, YouTube, Music or Local, so the icon is never ambiguous when the title is off."
+      },
+      {
+        "key": "defaultSource",
+        "type": "enum",
+        "label": "Open the browser on",
+        "options": [
+          "radio",
+          "tv",
+          "youtube",
+          "music",
+          "local"
+        ],
+        "defaultValue": "radio",
+        "description": "Which source the panel shows when you open it."
+      },
+      {
+        "key": "audioOnlyYouTube",
+        "type": "boolean",
+        "label": "YouTube is audio only",
+        "defaultValue": false,
+        "description": "Streams the best audio track and never opens a video window. The fastest way to use YouTube as a music source."
+      },
+      {
+        "key": "crossfadeSec",
+        "type": "number",
+        "label": "Crossfade",
+        "min": 0,
+        "max": 12,
+        "step": 0.5,
+        "defaultValue": 0,
+        "description": "Seconds of overlap between two audio items. Off by default; it only applies between audio, never across a video or a live stream."
+      },
+      {
+        "key": "playbackSpeed",
+        "type": "enum",
+        "label": "Playback speed",
+        "options": [
+          0.5,
+          0.75,
+          1.0,
+          1.25,
+          1.5,
+          1.75,
+          2.0
+        ],
+        "defaultValue": 1.0
+      },
+      {
+        "key": "resumePlayback",
+        "type": "boolean",
+        "label": "Resume where you left off",
+        "defaultValue": true,
+        "description": "Reopens timed media at the position you stopped at, once you are more than 30 seconds in."
+      },
+      {
+        "key": "rememberVolumePerDevice",
+        "type": "boolean",
+        "label": "Remember volume per output",
+        "defaultValue": true,
+        "description": "Headphones and speakers keep their own volume, the way omarchy.audio does."
+      },
+      {
+        "key": "equalizerEnabled",
+        "type": "boolean",
+        "label": "Enable the equalizer",
+        "defaultValue": false
+      },
+      {
+        "key": "eqPreset",
+        "type": "enum",
+        "label": "Equalizer preset",
+        "options": [
+          "Flat",
+          "Bass Boost",
+          "Vocal Boost",
+          "Classical",
+          "Electronic",
+          "Rock",
+          "Pop"
+        ],
+        "defaultValue": "Flat"
+      },
+      {
+        "key": "defaultQuality",
+        "type": "enum",
+        "label": "Video quality",
+        "options": [
+          "audio",
+          "144p",
+          "360p",
+          "480p",
+          "720p",
+          "1080p",
+          "1440p",
+          "2160p",
+          "max"
+        ],
+        "defaultValue": "720p",
+        "description": "Applies to YouTube and TV. The best is not always available, so this is a ceiling rather than a demand."
+      },
+      {
+        "key": "pipSize",
+        "type": "enum",
+        "label": "Picture-in-picture size",
+        "options": [
+          "s",
+          "m",
+          "l",
+          "xl"
+        ],
+        "defaultValue": "m"
+      },
+      {
+        "key": "pipCorner",
+        "type": "enum",
+        "label": "Picture-in-picture corner",
+        "options": [
+          "tl",
+          "tr",
+          "bl",
+          "br"
+        ],
+        "defaultValue": "br",
+        "description": "Where a new video window opens. You can still drag and snap it anywhere."
+      },
+      {
+        "key": "defaultAspect",
+        "type": "enum",
+        "label": "Aspect ratio",
+        "options": [
+          "auto",
+          "16:9",
+          "4:3",
+          "21:9",
+          "fill"
+        ],
+        "defaultValue": "auto"
+      },
+      {
+        "key": "autoHideControlsMs",
+        "type": "integer",
+        "label": "Hide video controls after",
+        "min": 0,
+        "max": 15000,
+        "step": 500,
+        "defaultValue": 3000,
+        "description": "Milliseconds of stillness before the overlay fades. Zero keeps it up."
+      },
+      {
+        "key": "hardwareDecode",
+        "type": "boolean",
+        "label": "Hardware video decoding",
+        "defaultValue": true,
+        "description": "Falls back to software automatically when the hardware cannot handle a stream."
+      },
+      {
+        "key": "minBitrate",
+        "type": "integer",
+        "label": "Minimum station bitrate",
+        "min": 0,
+        "max": 320,
+        "step": 8,
+        "defaultValue": 0,
+        "description": "Kilobits per second. Hides the very low quality streams that radio directories are full of. Zero shows everything."
+      },
+      {
+        "key": "reportPlays",
+        "type": "boolean",
+        "label": "Report plays to the station directory",
+        "defaultValue": true,
+        "description": "Tells Radio Browser you started a stream, which is how stations stay ranked. Turn it off to stop appearing in their statistics."
+      },
+      {
+        "key": "epgRefreshHours",
+        "type": "integer",
+        "label": "Refresh the TV guide every",
+        "min": 1,
+        "max": 168,
+        "step": 1,
+        "defaultValue": 12,
+        "description": "Hours. The guide is a few megabytes, so this is a download you schedule rather than one you wait for."
+      },
+      {
+        "key": "ytResolutionBudgetPerHour",
+        "type": "integer",
+        "label": "YouTube lookups per hour",
+        "min": 20,
+        "max": 600,
+        "step": 10,
+        "defaultValue": 120,
+        "description": "A ceiling on how many streams we resolve, so a stray loop cannot get you rate limited."
+      },
+      {
+        "key": "ytSearchResults",
+        "type": "integer",
+        "label": "YouTube results per search",
+        "min": 5,
+        "max": 50,
+        "step": 5,
+        "defaultValue": 20
+      },
+      {
+        "key": "useYtLyrics",
+        "type": "boolean",
+        "label": "Use YouTube's own lyrics",
+        "defaultValue": true,
+        "description": "On for YouTube Music tracks. Falls back to LRCLib and the lyrics sites when YouTube has none."
+      },
+      {
+        "key": "lyricsProviders",
+        "type": "enum",
+        "label": "Lyrics sources",
+        "options": [
+          "lrclib,azlyrics,sidecar",
+          "lrclib",
+          "lrclib,azlyrics",
+          "off"
+        ],
+        "defaultValue": "lrclib,azlyrics,sidecar",
+        "description": "Tried in order. A .lrc file beside the track always wins over the network."
+      },
+      {
+        "key": "scanRoots",
+        "type": "string",
+        "label": "Music folders",
+        "defaultValue": "",
+        "description": "Colon-separated folders to scan, for example ~/Music:~/Downloads/Music. Left empty, the XDG music directory is used."
+      },
+      {
+        "key": "offlineMode",
+        "type": "boolean",
+        "label": "Offline mode",
+        "defaultValue": false,
+        "description": "Stop all network requests. Cached results, downloaded media and the local library still work."
+      },
+      {
+        "key": "sendPlaysToDirectory",
+        "type": "boolean",
+        "label": "Anonymous usage",
+        "defaultValue": true,
+        "description": "Keeps anonymous counts so we can see which sources break. No account, no identifier, no per-person data."
+      },
+      {
+        "key": "notifyTrackChange",
+        "type": "boolean",
+        "label": "Notify on track change",
+        "defaultValue": false
+      },
+      {
+        "key": "autoPlay",
+        "type": "boolean",
+        "label": "Start playing on launch",
+        "defaultValue": true,
+        "description": "Begin playing the last station as soon as the widget appears."
+      },
+      {
+        "key": "showBitrate",
+        "type": "boolean",
+        "label": "Show stream bitrate in the browser",
+        "defaultValue": true,
+        "description": "Each row shows the codec and bitrate when the directory publishes them."
+      },
+      {
+        "key": "showCountry",
+        "type": "boolean",
+        "label": "Show the country in the browser",
+        "defaultValue": true,
+        "description": "Radio Browser knows where a station is from; showing it saves a guess."
+      },
+      {
+        "key": "artwork",
+        "type": "boolean",
+        "label": "Download station artwork",
+        "defaultValue": true,
+        "description": "Fetched in the background after the list appears, so a slow image host never delays a station."
+      },
+      {
+        "key": "artworkConcurrency",
+        "type": "integer",
+        "label": "Artwork downloads at once",
+        "defaultValue": 6,
+        "description": "Higher fills the list faster. Six is polite to the hosts serving the images.",
+        "min": 1,
+        "max": 16,
+        "step": 1
+      },
+      {
+        "key": "radioSyncHours",
+        "type": "integer",
+        "label": "Refresh the station list every",
+        "defaultValue": 24,
+        "description": "Hours. The list is mirrored locally, so this only affects how fresh it is.",
+        "min": 1,
+        "max": 168,
+        "step": 1
+      },
+      {
+        "key": "tvSyncHours",
+        "type": "integer",
+        "label": "Refresh the channel list every",
+        "defaultValue": 24,
+        "description": "Hours. The channel list is mirrored locally as well.",
+        "min": 1,
+        "max": 168,
+        "step": 1
+      },
+      {
+        "key": "tvBufferSec",
+        "type": "integer",
+        "label": "Stream buffer",
+        "defaultValue": 20,
+        "description": "Seconds of media to buffer ahead. More is steadier on a poor connection and slower to seek.",
+        "min": 5,
+        "max": 120,
+        "step": 5
+      },
+      {
+        "key": "tvUserAgent",
+        "type": "string",
+        "label": "User-Agent for TV streams",
+        "defaultValue": "AuroraPulse/0.1 (Omarchy)",
+        "description": "Some IPTV providers serve only known clients. A browser string is the usual thing that works."
+      },
+      {
+        "key": "tvHideGeoBlocked",
+        "type": "boolean",
+        "label": "Hide geo-blocked channels",
+        "defaultValue": true,
+        "description": "Channels marked geo-blocked usually refuse to play for you."
+      },
+      {
+        "key": "tvHideNot247",
+        "type": "boolean",
+        "label": "Hide channels that are not 24/7",
+        "defaultValue": true,
+        "description": "A channel that is not broadcasting shows a dead screen rather than an error."
+      },
+      {
+        "key": "tvHideNsfw",
+        "type": "boolean",
+        "label": "Hide adult channels",
+        "defaultValue": true,
+        "description": "iptv-org marks these, and they are not something to stumble into in a list."
+      },
+      {
+        "key": "tvOpenDefaultMuted",
+        "type": "boolean",
+        "label": "Start TV muted",
+        "defaultValue": false,
+        "description": "Live TV often has a much louder mix than a music stream."
+      },
+      {
+        "key": "localFollowSymlinks",
+        "type": "boolean",
+        "label": "Follow symbolic links when scanning",
+        "defaultValue": false,
+        "description": "Off is safer: a link into a directory that changes can make a scan run for a very long time."
+      }
+    ]
+  }
+}
