@@ -461,6 +461,9 @@ class Daemon:
                 self.emit(protocol.error(str(exc), exc.reason, ident))
             except resolver.ResolveError as exc:
                 self.emit(protocol.error(str(exc), exc.reason, ident))
+            except sandbox.SandboxUnavailable as exc:
+                # Not a bug: a missing dependency, said in words that name it.
+                self.emit(protocol.error(str(exc), "sandbox", ident))
             except SystemExit:
                 raise
             except Exception as exc:  # a bug must not kill the daemon

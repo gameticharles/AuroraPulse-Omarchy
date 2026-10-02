@@ -185,10 +185,12 @@ def _parse_sandboxed(body):
     import os
     import subprocess
     from ..util import sandbox
+    # A feed is a document from the internet: it is parsed sandboxed or not at
+    # all. Parsing it here instead ran the XML parser inside the daemon.
     try:
         cmd, fds = sandbox.sandbox_command("artwork", with_script=True)
-    except sandbox.SandboxUnavailable:
-        return parse_feed(body)
+    except sandbox.SandboxUnavailable as exc:
+        raise SourceError(str(exc), "sandbox") from exc
     try:
         proc = subprocess.run(cmd + ["--", sandbox.SANDBOX_SCRIPT, "parse-feed"],
                               input=body, capture_output=True, timeout=30, pass_fds=fds)

@@ -91,8 +91,16 @@ Before mpv starts, the sandboxed process verifies its own isolation by reading
 confirming `/home` does not exist, attempting `connect()` to `1.1.1.1:443` and
 `2606:4700:4700::1111:443` and requiring a network-unreachable errno, and
 checking that an `AF_VSOCK` socket fails with `EAFNOSUPPORT` (proving the family
-filter is live). **Any failure exits 4 and the player never starts.** If
-`bwrap` is missing, we refuse rather than run unsandboxed.
+filter is live). **Any failure exits 4 and the player never starts.**
+
+If `bwrap` is missing, nothing that would run sandboxed runs at all: not the
+player, and not the helpers either - ffprobe and ffmpeg on library files and
+artwork, the podcast feed parser, or yt-dlp for search, resolving and
+downloads. There is no unsandboxed fallback. A library scan stops before the
+index is touched, artwork that cannot be checked is not shown, and the panel
+says that bubblewrap is missing and where to install it (Settings › Health).
+`NoUnsandboxedFallback` in `tests/test_features.py` runs each of these paths
+with bwrap hidden and fails if any of them starts a process.
 
 ## 4. The guarded network path
 

@@ -240,7 +240,10 @@ class Downloads:
         try:
             cmd, fds = sandbox.tool_command(argv, profile="fetcher", write=[staging])
         except sandbox.SandboxUnavailable:
-            cmd, fds = argv, []
+            # Never yt-dlp outside the sandbox. The job fails with the reason,
+            # which names what to install.
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         try:
             self._proc = proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

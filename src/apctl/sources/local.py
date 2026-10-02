@@ -230,6 +230,10 @@ def art_ref(path, cache_dir, key):
 def scan(store, settings, on_progress=None):
     """Walk the roots and bring the index up to date. Returns the count of
     entries that changed."""
+    # Every new file is opened by ffprobe and ffmpeg, which only ever run
+    # sandboxed. Without bubblewrap the scan stops here, before the index is
+    # touched, and says what to install.
+    sandbox.require()
     roots = default_roots(settings)
     suffixes = extensions(settings) + VIDEO_SUFFIXES
     with _lock:

@@ -94,8 +94,26 @@ PROFILES = {
 }
 
 
+# Said wherever something is refused for want of the sandbox: what is
+# missing, why nothing runs without it, and where to fix it.
+MISSING_BWRAP = ("bubblewrap is not installed, and AuroraPulse never reads media, "
+                 "artwork or web pages outside its sandbox. Install it from "
+                 "Settings \u203a Health (package: bubblewrap).")
+
+
 class SandboxUnavailable(Exception):
-    pass
+    """The sandbox cannot be built here, so the work it would contain does
+    not run at all. There is no unsandboxed fallback anywhere: a missing
+    bubblewrap must never mean a parser running with the user's files and
+    network."""
+    reason = "sandbox"
+
+
+def require():
+    """Raise SandboxUnavailable unless a sandbox can be built on this machine.
+    For work that should stop before it starts, such as a library scan."""
+    if not shutil.which("bwrap"):
+        raise SandboxUnavailable(MISSING_BWRAP)
 
 
 def _memfd(name, payload):
@@ -366,8 +384,7 @@ def sandbox_command(profile="audio", extra_binds=(), extra_env=(), with_script=F
 
     bwrap = shutil.which("bwrap")
     if not bwrap:
-        raise SandboxUnavailable(
-            "bubblewrap (bwrap) is required; install bubblewrap")
+        raise SandboxUnavailable(MISSING_BWRAP)
 
     cmd = [
         bwrap,
@@ -569,14 +586,13 @@ def run_tool(argv, profile="artwork", read=(), write=(), env=(), timeout=60,
              stdin=None, text=False):
     """Run a tool sandboxed and wait for it. Returns a CompletedProcess.
 
-    Falls back to running it directly only when bubblewrap itself is missing,
-    so a machine without it still works rather than losing artwork and tags.
+    Raises SandboxUnavailable when bubblewrap is missing. It used to run the
+    tool directly instead, so a machine without bubblewrap parsed media files
+    and downloaded artwork with the user's full file and network access -
+    exactly what the sandbox is documented to prevent.
     """
     import subprocess
-    try:
-        cmd, fds = tool_command(argv, profile, read, write, env)
-    except SandboxUnavailable:
-        cmd, fds = list(argv), []
+    cmd, fds = tool_command(argv, profile, read, write, env)
     try:
         return subprocess.run(cmd, input=stdin, capture_output=True, timeout=timeout,
                               text=text, pass_fds=fds,

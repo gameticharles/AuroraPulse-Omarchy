@@ -96,6 +96,8 @@ def probe_image(path):
         width = int(stream.get("width") or 0)
         height = int(stream.get("height") or 0)
         return 64 <= width <= 8192 and 64 <= height <= 8192
+    except sandbox.SandboxUnavailable:
+        return False      # an image that cannot be checked safely is not shown
     except (ValueError, OSError, KeyError, subprocess.SubprocessError):
         return False
 
@@ -180,6 +182,8 @@ def _ytdlp(argv, timeout=YTDLP_TIMEOUT, offline_ok=False, listing=False):
             timeout=timeout, text=True)
     except subprocess.TimeoutExpired as exc:
         raise ResolveError("the site did not answer in time", "expired") from exc
+    except sandbox.SandboxUnavailable as exc:
+        raise ResolveError(str(exc), "sandbox") from exc
     except OSError as exc:
         raise ResolveError("yt-dlp is not available: %s" % exc, "unsupported") from exc
 

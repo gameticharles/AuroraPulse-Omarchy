@@ -820,6 +820,96 @@ class ToolRunner(TempDir):
         self.assertFalse(os.path.exists(os.path.join(self.dir, "escaped")))
 
 
+
+class NoUnsandboxedFallback(TempDir):
+    """Without bubblewrap nothing that parses media, artwork, feeds or web
+    pages runs at all. The tools used to be run directly instead, with the
+    user's full file and network access."""
+
+    def setUp(self):
+        super().setUp()
+        import subprocess as _subprocess
+        self._subprocess = _subprocess
+        self._saved = (sandbox.shutil.which, _subprocess.run, _subprocess.Popen)
+        real_which = sandbox.shutil.which
+        sandbox.shutil.which = lambda name, *a, **k: None if name == "bwrap" else real_which(name, *a, **k)
+        self.spawned = []
+
+        def tripwire(*args, **_kwargs):
+            self.spawned.append(args[0] if args else None)
+            raise AssertionError("ran a process without the sandbox: %r" % (args[:1],))
+        _subprocess.run = tripwire
+        _subprocess.Popen = tripwire
+
+    def tearDown(self):
+        sandbox.shutil.which, self._subprocess.run, self._subprocess.Popen = self._saved
+        super().tearDown()
+
+    def test_run_tool_refuses_and_says_what_to_install(self):
+        with self.assertRaises(sandbox.SandboxUnavailable) as caught:
+            sandbox.run_tool(["/usr/bin/ffprobe", "x.mp3"], read=[self.dir])
+        self.assertIn("bubblewrap", str(caught.exception))
+        self.assertIn("Health", str(caught.exception))
+        self.assertEqual(self.spawned, [])
+
+    def test_a_library_scan_stops_before_the_index_is_touched(self):
+        open(os.path.join(self.dir, "song.mp3"), "wb").close()
+        store = Store(self.dir, self.dir, self.dir)
+        with self.assertRaises(sandbox.SandboxUnavailable):
+            local.scan(store, {"scanRoots": self.dir})
+        self.assertFalse(local.progress().get("running"))
+        self.assertEqual(self.spawned, [])
+
+    def test_a_podcast_feed_is_not_parsed_inside_the_daemon(self):
+        original = podcast.parse_feed
+        podcast.parse_feed = lambda _body: self.fail("parsed a feed unsandboxed")
+        try:
+            with self.assertRaises(podcast.SourceError) as caught:
+                podcast._parse_sandboxed(b"<rss></rss>")
+        finally:
+            podcast.parse_feed = original
+        self.assertEqual(caught.exception.reason, "sandbox")
+
+    def test_youtube_is_not_resolved_unsandboxed(self):
+        with self.assertRaises(resolver.ResolveError) as caught:
+            resolver._ytdlp(["https://www.youtube.com/watch?v=x"], offline_ok=True)
+        self.assertEqual(caught.exception.reason, "sandbox")
+        self.assertEqual(self.spawned, [])
+
+    def test_artwork_that_cannot_be_checked_safely_is_refused(self):
+        image = os.path.join(self.dir, "cover.jpg")
+        with open(image, "wb") as handle:
+            handle.write(b"\xff\xd8" + b"x" * 2048)
+        self.assertFalse(resolver.probe_image(image))
+        self.assertEqual(self.spawned, [])
+
+    def test_a_download_fails_instead_of_running_yt_dlp_directly(self):
+        from apctl.core import downloads
+        saved = (downloads.audio_dir, downloads.video_dir)
+        downloads.audio_dir = downloads.video_dir = lambda: self.dir
+        job = {"id": "j1", "kind": "audio", "artist": "A", "title": "T", "format": "mp3",
+               "url": "https://www.youtube.com/watch?v=x", "progress": 0.0}
+        try:
+            with self.assertRaises(sandbox.SandboxUnavailable):
+                downloads.Downloads._download(downloads.Downloads.__new__(downloads.Downloads), job)
+        finally:
+            downloads.audio_dir, downloads.video_dir = saved
+        self.assertFalse(os.path.exists(os.path.join(self.dir, ".aurorapulse-j1")),
+                         "the staging folder is cleaned up")
+        self.assertEqual(self.spawned, [])
+
+    def test_the_panel_gets_an_actionable_error(self):
+        events = []
+        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=events.append)
+        d.settings = lambda: dict(daemon.DEFAULT_SETTINGS, scanRoots=self.dir)
+        d.handle({"cmd": "scan", "id": 7})
+        deadline = time.time() + 5
+        while time.time() < deadline and not any(e.get("type") == "error" for e in events):
+            time.sleep(0.05)
+        error = next(e for e in events if e.get("type") == "error")
+        self.assertEqual((error["id"], error["reason"]), (7, "sandbox"))
+        self.assertIn("bubblewrap", error["message"])
+
 class Recording(TempDir):
     def test_waits_for_the_last_block(self):
         """mpv writes the end of a recording a moment after being told to
