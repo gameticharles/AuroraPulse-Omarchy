@@ -3379,7 +3379,7 @@ class Daemon:
             env["AP_START_MUTED"] = "1"
         from .downloads import recordings_dir
         env["AP_RECORD_DIR"] = os.path.join(recordings_dir(), ".recording")
-        env["AP_HWDEC"] = "auto-safe" if self._on("hardwareDecode", True) else "no"
+        env["AP_HWDEC"] = "auto-safe" if self._on("hardwareDecode", False) else "no"
         env["AP_AUDIO_TARGET"] = str(self._on("audioOutput", "") or "")
         if want_video:
             # Before the window exists, so it opens in place rather than
@@ -3848,7 +3848,7 @@ DEFAULT_SETTINGS = {
     "rememberVolumePerDevice": True, "equalizerEnabled": False,
     "eqPreset": "Flat", "defaultQuality": "720p", "pipSize": "m",
     "pipCorner": "br", "defaultAspect": "auto", "autoHideControlsMs": 3000,
-    "hardwareDecode": True, "videoMonitor": "", "minBitrate": 0, "reportPlays": True,
+    "hardwareDecode": False, "videoMonitor": "", "minBitrate": 0, "reportPlays": True,
     "autoSyncHours": 24, "epgUrl": "", "epgRefreshHours": 12,
     "ytResolutionBudgetPerHour": 120, "ytSearchResults": 20,
     "useYtLyrics": True, "lyricsProviders": "lrclib,azlyrics,sidecar",

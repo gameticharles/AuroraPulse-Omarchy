@@ -477,8 +477,8 @@ Item {
         C.SectionHeader { title: "Video" }
         C.ToggleRow {
           label: "Hardware decoding"
-          help: "Uses the graphics card for video. Turn off if videos show as green or garbled."
-          checked: root.value("hardwareDecode", true)
+          help: "Uses the graphics card for video, which saves power. Off by default: on some laptops it crashes the player or breaks up the sound."
+          checked: root.value("hardwareDecode", false)
           onToggled: function (v) { root.settingChanged("hardwareDecode", v) }
         }
         C.ChoiceRow {

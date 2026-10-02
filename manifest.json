@@ -65,7 +65,7 @@
       "pipCorner": "br",
       "defaultAspect": "auto",
       "autoHideControlsMs": 3000,
-      "hardwareDecode": true,
+      "hardwareDecode": false,
       "minBitrate": 0,
       "reportPlays": true,
       "autoSyncHours": 24,
@@ -271,8 +271,8 @@
         "key": "hardwareDecode",
         "type": "boolean",
         "label": "Hardware video decoding",
-        "defaultValue": true,
-        "description": "Falls back to software automatically when the hardware cannot handle a stream."
+        "defaultValue": false,
+        "description": "Off by default: on laptops with two graphics chips it can crash the video player or break up the sound. Turn it on to save power if video plays well with it."
       },
       {
         "key": "minBitrate",
