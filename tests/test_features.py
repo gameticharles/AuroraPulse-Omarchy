@@ -853,5 +853,195 @@ class Recording(TempDir):
         self.assertEqual(d.player.props.get("stream-record"), "")
 
 
+
+# -- picture quality -----------------------------------------------------------
+
+def hls_tracks(selected=0):
+    """mpv's track list for an HLS stream with 1080p, 720p and 360p
+    renditions, as 24 TV reports it: a video and an audio track per program."""
+    out = []
+    for n, (height, rate) in enumerate(((1080, 2500000), (720, 1200000), (360, 400000))):
+        out.append({"id": n + 1, "type": "video", "program-id": n, "demux-h": height,
+                    "hls-bitrate": rate, "selected": n == selected})
+        out.append({"id": n + 1, "type": "audio", "program-id": n,
+                    "hls-bitrate": rate, "selected": n == selected})
+    return out
+
+
+class TrackPlayer(FakePlayer):
+    def __init__(self, tracks):
+        super().__init__()
+        self.tracks = tracks
+
+    def request(self, *args, timeout=2.0):
+        if args == ("get_property", "track-list"):
+            return True, self.tracks
+        return True, []
+
+
+class PictureQuality(TempDir):
+    def daemon(self, tracks, preference="best"):
+        events = []
+        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=events.append)
+        d.player = TrackPlayer(tracks)
+        d._session_video = True
+        d.settings = lambda: dict(daemon.DEFAULT_SETTINGS, tvQuality=preference)
+        return d, events
+
+    def test_renditions_are_listed_best_first_with_a_tier(self):
+        d, events = self.daemon(hls_tracks(selected=1))
+        d._emit_quality()
+        sent = [e for e in events if e.get("type") == "quality"][-1]
+        self.assertEqual([c["label"] for c in sent["choices"]],
+                         ["FHD · 1080p · 2.5 Mbps", "HD · 720p · 1.2 Mbps", "SD · 360p · 0.4 Mbps"])
+        self.assertEqual(sent["selected"], "p:1")
+        self.assertEqual(sent["short"], "HD")
+        self.assertEqual([Daemon._quality_tier(h) for h in (684, 576, 0)], ["HD", "SD", ""])
+
+    def test_a_single_rendition_or_a_plain_file_offers_no_choice(self):
+        d, _ = self.daemon([{"id": 1, "type": "video", "demux-h": 720, "selected": True}])
+        self.assertEqual(d._variants(), [])
+        d, _ = self.daemon(hls_tracks()[:2])
+        self.assertEqual(d._variants(), [])
+
+    def test_broadcast_programs_without_an_hls_bitrate_are_not_renditions(self):
+        tracks = [dict(t) for t in hls_tracks()]
+        for t in tracks:
+            del t["hls-bitrate"]
+        d, _ = self.daemon(tracks)
+        self.assertEqual(d._variants(), [])
+
+    def test_the_preference_picks_the_nearest_rendition_no_taller(self):
+        d, _ = self.daemon(hls_tracks(selected=0), preference="720")
+        d._apply_quality()
+        self.assertEqual((d.player.props.get("vid"), d.player.props.get("aid")), (2, 2))
+        d, _ = self.daemon(hls_tracks(selected=0), preference="480")
+        d._apply_quality()
+        self.assertEqual(d.player.props.get("vid"), 3)
+        d, _ = self.daemon(hls_tracks(selected=0), preference="240")
+        d._apply_quality()
+        self.assertEqual(d.player.props.get("vid"), 3, "smaller than all: the smallest")
+
+    def test_a_rendition_already_at_the_preference_is_left_alone(self):
+        d, _ = self.daemon(hls_tracks(selected=1), preference="720")
+        d._apply_quality()
+        self.assertNotIn("vid", d.player.props)
+
+    def test_choosing_one_remembers_its_height_and_the_top_one_means_best(self):
+        d, _ = self.daemon(hls_tracks(selected=0))
+        saved = {}
+        d.set_setting = lambda key, value: saved.__setitem__(key, value)
+        d.cmd_quality({"action": "select", "key": "p:2"})
+        self.assertEqual((d.player.props["vid"], d.player.props["aid"]), (3, 3))
+        self.assertEqual(saved["tvQuality"], "360")
+        d.cmd_quality({"action": "select", "key": "p:0"})
+        self.assertEqual(saved["tvQuality"], "best")
+        d.cmd_quality({"action": "select", "key": "p:9"})
+        self.assertEqual(d.player.props["vid"], 1, "an unknown key changes nothing")
+
+
+# -- controls that are remembered ----------------------------------------------
+
+class LoadPlayer(TrackPlayer):
+    """Answers loadfile and remembers how it was asked."""
+    def __init__(self, tracks=()):
+        super().__init__(list(tracks))
+        self.loads = []
+
+    def request(self, *args, timeout=2.0):
+        if args and args[0] == "loadfile":
+            self.loads.append(args)
+            return True, {"playlist_entry_id": 1}
+        return super().request(*args, timeout=timeout)
+
+
+class RememberedControls(TempDir):
+    def daemon(self, **settings):
+        events = []
+        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=events.append)
+        for key, value in settings.items():
+            d.set_setting(key, value, apply=False)
+        # Never the real Hyprland from a test.
+        d._video_rule = lambda: False
+        d._dispatch = lambda *a: None
+        d._place_video = lambda *a, **k: None
+        d._emit_video_window = lambda learn=False: None
+        return d, events
+
+    def test_subtitles_turned_off_from_the_menu_stay_off(self):
+        d, events = self.daemon(subtitlesEnabled=True)
+        d.player = TrackPlayer([{"id": 1, "type": "sub", "lang": "en", "selected": True}])
+        d.cmd_subtitle({"action": "off"})
+        self.assertFalse(d._on("subtitlesEnabled"))
+        self.assertEqual(d.player.props.get("sid"), "no")
+        self.assertTrue(any(e.get("type") == "settings" for e in events), "the panel hears of it")
+
+    def test_choosing_a_track_turns_them_on_in_its_language(self):
+        d, _ = self.daemon(subtitlesEnabled=False)
+        d.player = TrackPlayer([{"id": 2, "type": "sub", "lang": "FR"}])
+        d.cmd_subtitle({"action": "select", "key": "mpv:2"})
+        self.assertEqual(d.player.props.get("sid"), 2)
+        self.assertTrue(d._on("subtitlesEnabled"))
+        self.assertEqual(d._on("subtitleLanguage"), "fr")
+
+    def test_a_video_starts_without_subtitles_when_they_are_off(self):
+        d, _ = self.daemon(subtitlesEnabled=False)
+        d.player, d._session_video = LoadPlayer(), True
+        d._load("https://example.com/v.m3u8")
+        self.assertIn("sid=no", d.player.loads[-1][-1])
+        d, _ = self.daemon(subtitlesEnabled=True)
+        d.player, d._session_video = LoadPlayer(), True
+        d._load("https://example.com/v.m3u8")
+        self.assertEqual(d.player.loads[-1], ("loadfile", "https://example.com/v.m3u8", "replace"))
+
+    def test_pin_and_float_are_remembered_for_the_next_window(self):
+        d, _ = self.daemon()
+        d.video_window = lambda: {"address": "0x1", "floating": False, "pinned": False}
+        d.cmd_pip({"action": "pin"})
+        self.assertTrue(d._on("pipPinned"))
+        self.assertTrue(d._on("pipFloating"), "pinning floats a tiled window")
+        d.video_window = lambda: {"address": "0x1", "floating": True, "pinned": True}
+        d.cmd_pip({"action": "pin"})
+        self.assertFalse(d._on("pipPinned"))
+        d.cmd_pip({"action": "unfloat"})
+        self.assertFalse(d._on("pipFloating"))
+        d.cmd_pip({"action": "corner", "corner": "tl"})
+        self.assertEqual(d._on("pipCorner"), "tl")
+        self.assertTrue(d._on("pipFloating"), "a corner means floating")
+
+    def test_a_window_changed_with_hyprland_keys_is_remembered(self):
+        d, _ = self.daemon()
+        del d._emit_video_window              # the real one
+        d.video_window = lambda: {"address": "0x1", "floating": True, "pinned": True}
+        d.cmd_video_window({})
+        self.assertTrue(d._on("pipPinned"))
+        d.video_window = lambda: {"address": "0x1", "floating": False, "pinned": False}
+        d.cmd_video_window({})
+        self.assertFalse(d._on("pipFloating"))
+        self.assertTrue(d._on("pipPinned"), "a tiled window says nothing about pinning")
+
+    def test_the_window_rule_follows_the_remembered_state(self):
+        d, _ = self.daemon(pipSize="s", pipCorner="tr", pipFloating=True, pipPinned=True)
+        del d._video_rule                     # the real one, with hyprctl faked
+        d._monitor = lambda: {"name": "eDP-1", "x": 0, "y": 0, "width": 1920,
+                              "height": 1080, "scale": 1, "reserved": [0, 26, 0, 0]}
+        sent = []
+
+        class Done:
+            returncode, stdout = 0, "ok"
+        original_run, original_which = daemon.subprocess.run, daemon.shutil.which
+        daemon.subprocess.run = lambda args, **_k: (sent.append(args[-1]), Done())[1]
+        daemon.shutil.which = lambda _name: "/usr/bin/hyprctl"
+        try:
+            self.assertTrue(d._video_rule())
+            self.assertIn("float = true, size = { 460, 258 }, move = { 1444, 42 }, pin = true",
+                          sent[-1])
+            d.set_setting("pipFloating", False, apply=False)
+            d._video_rule()
+            self.assertIn("float = false", sent[-1])
+            self.assertNotIn("move", sent[-1])
+        finally:
+            daemon.subprocess.run, daemon.shutil.which = original_run, original_which
+
 if __name__ == "__main__":
     unittest.main()

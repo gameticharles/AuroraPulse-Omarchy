@@ -1009,6 +1009,15 @@ Item {
           onToggled: function (v) { root.settingChanged("tvHideNsfw", v) }
         }
 
+        C.ChoiceRow {
+          label: "Picture quality"
+          help: "For channels that offer several. The nearest one no sharper than this is used; the HD button above the player changes it while you watch."
+          options: ["best", "1080", "720", "480", "360"]
+          value: root.value("tvQuality", "best")
+          format: function (v) { return v === "best" ? "Best" : v + "p" }
+          onPicked: function (v) { root.settingChanged("tvQuality", v) }
+        }
+
         C.SectionHeader { title: "Advanced playback" }
         C.SliderRow {
           label: "Stream buffer"

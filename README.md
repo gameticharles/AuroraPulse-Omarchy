@@ -49,8 +49,10 @@ the packages arrive.
   (speakers, headphones, Bluetooth).
 - **Video**: a floating window that opens in its corner on the screen you
   choose, in four sizes, pinnable and full-screenable; hardware decoding;
-  picture shape (16:9, 4:3, 21:9, fill); **subtitles** from YouTube, from the
-  file or from a `.srt` beside it, with size and track choice.
+  picture shape (16:9, 4:3, 21:9, fill); **picture quality** (SD, HD, Full HD)
+  for channels that offer several, switched live and remembered; **subtitles**
+  from YouTube, from the file or from a `.srt` beside it, with size and track
+  choice.
 - **Lyrics**: synced where available, click a line to seek, three text sizes,
   save as an `.lrc` file.
 - **Record** a radio or TV stream to a file.

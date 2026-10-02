@@ -70,6 +70,11 @@ Panel {
   property bool castSearching: false
   property var subtitleChoices: []
   property string subtitleSelected: ""
+  // Renditions of an adaptive stream (TV): [{key, label}], best first.
+  property var qualityChoices: []
+  property string qualitySelected: ""
+  property string qualityShort: ""
+  property string qualityPreference: "best"
   property var playlists: []
   property var playlistView: null      // {id, name, smart, items} when one is open
   property bool hasNext: false
@@ -215,6 +220,21 @@ Panel {
   property var tabState: ({})
   property bool userPickedTab: false
   property bool preferredApplied: false
+  // Start-up picks a tab once, when both the settings and the first state
+  // have arrived: what is playing if anything is, else the default tab.
+  property bool gotSettings: false
+  property bool gotState: false
+  property bool startupTabDone: false
+  property bool startupWaited: false
+  // A player that survived a shell restart can take a moment to report in;
+  // the default tab waits this long for it before applying.
+  Timer {
+    id: startupWait
+    interval: 1500
+    onTriggered: { root.startupWaited = true; root.startupTab() }
+  }
+  // A row to bring into view once the list it is in has loaded.
+  property string revealUid: ""
 
   // --------------------------------------------------------------- extras
 
@@ -361,7 +381,8 @@ Panel {
       browseMode: browseMode, searchText: searchText, country: country,
       genre: genre, group: group, folder: folder, sort: sort, items: items,
       genres: genres, countries: countries, listTotal: listTotal,
-      listLimit: listLimit, listMore: listMore
+      listLimit: listLimit, listMore: listMore,
+      top: browser ? browser.topIndex() : 0
     }
     tabState = next
   }
@@ -387,6 +408,8 @@ Panel {
       listTotal = saved.listTotal
       listLimit = saved.listLimit
       listMore = !!saved.listMore
+      var top = saved.top || 0
+      if (top > 0) Qt.callLater(function () { if (browser) browser.showIndex(top, false) })
     } else {
       browseMode = (name === "youtube" || name === "music") ? "search" : "browse"
       searchText = ""
@@ -500,6 +523,7 @@ Panel {
     var low = Math.max(0, at - 50)
     var high = Math.min(list.length, at + 150)
     request("play", { items: list.slice(low, high), start: at - low })
+    rememberBrowse()
     // Shown at once; the daemon confirms with a state event a moment later.
     item = entry
     mode = "loading"
@@ -705,10 +729,8 @@ Panel {
         country = cc
         loadSource()
       }
-      if (!userPickedTab && settings2.defaultSource
-          && String(settings2.defaultSource) !== source && !items.length) {
-        selectSource(String(settings2.defaultSource), false)
-      }
+      gotSettings = true
+      startupTab()
       break
 
     case "state":
@@ -745,6 +767,13 @@ Panel {
     case "subtitles":
       subtitleChoices = msg.choices || []
       subtitleSelected = msg.selected || ""
+      break
+
+    case "quality":
+      qualityChoices = msg.choices || []
+      qualitySelected = msg.selected || ""
+      qualityShort = msg.short || ""
+      qualityPreference = msg.preference || "best"
       break
 
     case "raise":
@@ -949,11 +978,17 @@ Panel {
       var have = {}
       for (var h = 0; h < items.length; h++) have[items[h].uid] = true
       items = items.concat(page.filter(function (e) { return !have[e.uid] }))
+      listMore = !!msg.more
+    } else if (page.length && page.length < items.length && samePrefix(page, items)) {
+      // The same list asked for again - a tab opened again refreshes its
+      // first page. The rows below it stay, and so does the scroll position.
+      items = page.concat(items.slice(page.length))
     } else {
       items = page
+      listMore = !!msg.more
     }
-    listMore = !!msg.more
     listTotal = (msg.total === undefined || msg.total === null) ? -1 : msg.total
+    revealPending()
     if (playFirstResult && items.length) {
       playFirstResult = false
       playEntry(items[0], 0)
@@ -961,8 +996,100 @@ Panel {
     if (msg.source === "local") scanning = !!msg.scanning
   }
 
+  function samePrefix(page, list) {
+    for (var i = 0; i < page.length; i++)
+      if (!list[i] || !page[i] || list[i].uid !== page[i].uid) return false
+    return true
+  }
+
+  // Once, at start-up: open on the tab of what is playing, the way it was
+  // left when it was played (search, filters, the row), so a shell restart
+  // or a reboot does not land on Radio while TV plays. With nothing playing
+  // the default tab from Settings applies, as before.
+  function startupTab() {
+    if (startupTabDone || !gotSettings || !gotState) return
+    if (!item && !startupWaited) {
+      startupWait.start()
+      return
+    }
+    startupTabDone = true
+    if (userPickedTab) return
+    var tab = item ? String(item.source || "") : ""
+    if (["radio", "tv", "youtube", "music", "podcast", "local"].indexOf(tab) < 0) {
+      var fallback = String(settings2.defaultSource || "")
+      if (fallback && fallback !== source && !items.length) selectSource(fallback, false)
+      return
+    }
+    var saved = null
+    try { saved = JSON.parse(String(settings2.lastBrowse || "null")) } catch (e) { saved = null }
+    if (saved && saved.source === tab) {
+      var next = Object.assign({}, tabState)
+      next[tab] = {
+        browseMode: saved.browseMode || ((tab === "youtube" || tab === "music") ? "search" : "browse"),
+        searchText: saved.searchText || "", country: saved.country || "",
+        genre: saved.genre || "", group: saved.group || "", folder: saved.folder || "",
+        sort: saved.sort || "title", items: [], genres: [], countries: [],
+        listTotal: -1, listLimit: 60, listMore: false, top: 0
+      }
+      tabState = next
+      if (tab === "local") {
+        localMedia = saved.localMedia || ""
+        localGroup = saved.localGroup || ""
+        localFilter = saved.localFilter || null
+      }
+      revealUid = item.uid
+    }
+    if (tab === source && items.length) {
+      revealUid = item.uid
+      revealPending()
+    } else {
+      selectSource(tab, false)
+    }
+  }
+
+  // The browsing that led to what is playing, kept in Settings so the next
+  // start-up can open on it. Written only when it changes.
+  function rememberBrowse() {
+    var state = {
+      source: source, browseMode: browseMode === "episodes" ? "browse" : browseMode,
+      searchText: String(searchText || "").slice(0, 120), country: country, genre: genre,
+      group: group, folder: folder, sort: sort
+    }
+    if (source === "local") {
+      state.localMedia = localMedia
+      state.localGroup = localGroup
+      if (localFilter && JSON.stringify(localFilter).length < 160) state.localFilter = localFilter
+    }
+    // Angle brackets escaped: the daemon strips anything that looks like
+    // markup from a setting, and JSON.parse reads \u003c back as "<".
+    var text = JSON.stringify(state).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
+    if (text.length > 500) return
+    if (text !== String(settings2.lastBrowse || "")) changeSetting("lastBrowse", text)
+  }
+
+  // Bring the row being waited for into view: once it is in the list, or
+  // after a few more pages when it is further down.
+  function revealPending() {
+    if (!revealUid) return
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].uid === revealUid) {
+        revealUid = ""
+        var at = i
+        Qt.callLater(function () { if (browser) browser.showIndex(at, true) })
+        return
+      }
+    }
+    if (listMore && items.length < 360) Qt.callLater(loadMore)
+    else revealUid = ""
+  }
+
   function applyState(msg) {
-    item = (msg.item && msg.item.uid) ? msg.item : null
+    var next = (msg.item && msg.item.uid) ? msg.item : null
+    // A new stream has its own renditions; the daemon lists them once it plays.
+    if (!next || !item || next.uid !== item.uid) qualityChoices = []
+    item = next
+    gotState = true
+    if (!startupTabDone) Qt.callLater(startupTab)
     mode = msg.mode || (item ? (msg.paused ? "paused" : "playing") : "off")
     paused = msg.paused === undefined ? !item : !!msg.paused
     buffering = !!msg.buffering
@@ -1510,6 +1637,37 @@ Panel {
                     else root.request("playlist", {
                       action: "create", items: [root.item],
                       name: "Playlist " + (root.playlists.filter(function (p) { return !p.smart }).length + 1) })
+                  }
+                }
+              }
+              IconButton {
+                // Only when the stream offers more than one rendition.
+                visible: root.hasItem && root.hasVideo && root.qualityChoices.length > 1
+                label: root.qualityShort || "Q"
+                size: 28
+                colorFg: root.panelDim
+                colorAccent: root.accent
+                tip: "Picture quality"
+                onClicked: {
+                  root.request("quality", { action: "list" })
+                  qualityMenu.popup()
+                }
+                Menu {
+                  id: qualityMenu
+                  MenuItem {
+                    text: (root.qualityPreference === "best" ? "● " : "    ") + "Best available"
+                    onTriggered: root.request("quality", { action: "best" })
+                  }
+                  MenuSeparator {}
+                  Instantiator {
+                    model: root.qualityChoices
+                    delegate: MenuItem {
+                      required property var modelData
+                      text: (modelData.key === root.qualitySelected ? "● " : "    ") + modelData.label
+                      onTriggered: root.request("quality", { action: "select", key: modelData.key })
+                    }
+                    onObjectAdded: function (index, object) { qualityMenu.insertItem(index + 2, object) }
+                    onObjectRemoved: function (index, object) { qualityMenu.removeItem(object) }
                   }
                 }
               }

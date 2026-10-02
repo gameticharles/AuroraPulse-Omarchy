@@ -180,7 +180,51 @@ Item {
     }))
   }
   onGuideViewChanged: requestGuide()
+
+  // The rows the list and the grid show. Each row is only its position; the
+  // entry itself is read from `items`. Handing the views `items` directly
+  // rebuilt them on every new page - a new array is a new model - so the
+  // list jumped back to the top each time it loaded more. Rows here are only
+  // ever appended while the list grows, and cleared when it is a different
+  // list, so a page lands under the rows on screen.
+  ListModel { id: rows }
+  property var shownUids: []
+  // What the rows read, set in step with them. Reading `items` directly let
+  // rows of the old list look up entries of a new, shorter one for a moment
+  // before they were removed.
+  property var shownItems: []
+
+  function syncRows() {
+    var next = root.items || []
+    var old = shownUids
+    var grows = next.length >= old.length
+    for (var i = 0; grows && i < old.length; i++)
+      if (!next[i] || next[i].uid !== old[i]) grows = false
+    if (!grows) rows.clear()
+    shownItems = next
+    var added = []
+    for (var j = grows ? old.length : 0; j < next.length; j++) added.push({ n: j })
+    if (added.length) rows.append(added)
+    shownUids = next.map(function (e) { return e ? e.uid : "" })
+  }
+  Component.onCompleted: syncRows()
+
+  // The first row in sight, and back to it: a tab keeps its place when it is
+  // left and opened again.
+  function topIndex() {
+    var view = root.gridView ? grid : list
+    var at = view.indexAt(Style.space(8), view.contentY + Style.space(8))
+    return at < 0 ? 0 : at
+  }
+  function showIndex(index, centre) {
+    if (index < 0 || index >= rows.count) return
+    var view = root.gridView ? grid : list
+    view.positionViewAtIndex(index, centre ? (root.gridView ? GridView.Center : ListView.Center)
+                                           : (root.gridView ? GridView.Beginning : ListView.Beginning))
+  }
+
   onItemsChanged: {
+    syncRows()
     if (root.guideView) Qt.callLater(root.requestGuide)
     if (root.cursor >= root.items.length) root.cursor = -1
   }
@@ -666,7 +710,7 @@ Item {
         visible: root.items.length > 0 && !root.gridView && !root.guideView
         clip: true
         spacing: Style.space(2)
-        model: root.items
+        model: rows
         boundsBehavior: Flickable.StopAtBounds
         onContentYChanged: root.maybeLoadMore(list)
         onContentHeightChanged: root.maybeLoadMore(list)
@@ -676,8 +720,8 @@ Item {
 
         delegate: Item {
           id: row
-          required property var modelData
           required property int index
+          readonly property var modelData: root.shownItems[index] || ({})
           width: list.width - Style.space(8)
           // 16:9 for anything that is a picture: YouTube, and local videos.
           readonly property bool wide: root.wideArt
@@ -905,7 +949,7 @@ Item {
         anchors.fill: parent
         visible: root.items.length > 0 && root.gridView && !root.guideView
         clip: true
-        model: root.items
+        model: rows
         boundsBehavior: Flickable.StopAtBounds
         readonly property int columns: Math.max(2, Math.floor(width / Style.space(118)))
         cellWidth: Math.floor(width / columns)
@@ -918,8 +962,8 @@ Item {
 
         delegate: Item {
           id: tile
-          required property var modelData
           required property int index
+          readonly property var modelData: root.shownItems[index] || ({})
           width: grid.cellWidth
           height: grid.cellHeight
           readonly property bool isCurrent: root.currentUid !== ""
@@ -1251,7 +1295,8 @@ Item {
   }
 
   function displayTitle(entry) {
-    if (!entry) return ""
+    // A row on its way out can be asked once more after its entry is gone.
+    if (!entry || !entry.title) return ""
     if (entry.kind === "genre" || entry.kind === "group" || entry.kind === "country"
         || entry.kind === "folder" || entry.kind === "album" || entry.kind === "artist") {
       return entry.title

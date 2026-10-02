@@ -63,6 +63,8 @@
       "defaultQuality": "720p",
       "pipSize": "m",
       "pipCorner": "br",
+      "pipFloating": true,
+      "pipPinned": false,
       "defaultAspect": "auto",
       "autoHideControlsMs": 3000,
       "hardwareDecode": false,
@@ -89,6 +91,7 @@
       "tvHideNot247": true,
       "tvHideNsfw": true,
       "tvOpenDefaultMuted": false,
+      "tvQuality": "best",
       "localFollowSymlinks": false,
       "artwork": true,
       "artworkConcurrency": 6,
@@ -243,6 +246,20 @@
         ],
         "defaultValue": "br",
         "description": "Where a new video window opens. You can still drag and snap it anywhere."
+      },
+      {
+        "key": "pipFloating",
+        "type": "boolean",
+        "label": "Video window floats",
+        "defaultValue": true,
+        "description": "Off opens it tiled with your other windows. The float and tile button beside the player sets this too."
+      },
+      {
+        "key": "pipPinned",
+        "type": "boolean",
+        "label": "Pin the video window",
+        "defaultValue": false,
+        "description": "Keeps a floating video window on top of every workspace. The pin button beside the player sets this too."
       },
       {
         "key": "defaultAspect",
@@ -469,6 +486,20 @@
         "label": "Start TV muted",
         "defaultValue": false,
         "description": "Live TV often has a much louder mix than a music stream."
+      },
+      {
+        "key": "tvQuality",
+        "type": "enum",
+        "label": "TV picture quality",
+        "options": [
+          "best",
+          "1080",
+          "720",
+          "480",
+          "360"
+        ],
+        "defaultValue": "best",
+        "description": "For channels that offer several renditions: the sharpest one no taller than this many lines. The quality button above the player changes it while you watch."
       },
       {
         "key": "localFollowSymlinks",

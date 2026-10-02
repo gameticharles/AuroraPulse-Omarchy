@@ -102,7 +102,7 @@ CONTROL_COMMANDS = frozenset((
     "favorite", "saved", "forget", "raise",
     # Order matters for these - "add to playlist" then "move it up", "set the
     # alarm" then "try it" - and the pool would run them side by side.
-    "playlist", "alarm", "subtitle",
+    "playlist", "alarm", "subtitle", "quality",
 ))
 
 # Commands that start, change or end playback. One thread, newest wins: a
@@ -351,7 +351,10 @@ class Daemon:
         merged.update(self.store.state.get("settings") or {})
         return merged
 
-    def set_setting(self, key, value):
+    def set_setting(self, key, value, apply=True):
+        """Save a setting and put it into effect. apply=False only saves it:
+        for a choice that is already in effect, such as a subtitle track picked
+        from the menu, which re-applying the setting could replace."""
         key = textutil.text(key, 64)
         if key not in DEFAULT_SETTINGS:
             return False
@@ -379,6 +382,11 @@ class Daemon:
             save_soon()
         else:
             self.store.save()
+        if not apply:
+            return True
+        if key in ("pipSize", "pipCorner", "pipFloating", "pipPinned", "videoMonitor"):
+            # The next video window opens the way the last one was left.
+            POOL.submit(self._video_rule)
         if key == "offlineMode":
             netguard.set_offline(bool(value))
             if not value and self.syncer is not None:
@@ -393,6 +401,8 @@ class Daemon:
         if key in ("subtitlesEnabled", "subtitleSize", "subtitleLanguage"):
             # May fetch a subtitle file, so never on the caller's lane.
             POOL.submit(self._apply_subtitles)
+        if key == "tvQuality":
+            POOL.submit(self._apply_quality)
         if key.startswith("alarm"):
             self._alarm_fired_on = ""
             self._alarm_at = self._alarm_next()
@@ -2458,17 +2468,23 @@ class Daemon:
         monitor = self._monitor()
         if not monitor or not shutil.which("hyprctl"):
             return False
-        x, y, w, h = self._pip_geometry(monitor)
-        # A rule's move is in the monitor's own coordinates.
-        x -= int(monitor.get("x", 0))
-        y -= int(monitor.get("y", 0))
+        if self._on("pipFloating", True):
+            x, y, w, h = self._pip_geometry(monitor)
+            # A rule's move is in the monitor's own coordinates.
+            x -= int(monitor.get("x", 0))
+            y -= int(monitor.get("y", 0))
+            effects = "float = true, size = { %d, %d }, move = { %d, %d }" % (w, h, x, y)
+            if self._on("pipPinned", False):
+                effects += ", pin = true"
+        else:
+            # Tiled, as it was left: the layout places it.
+            effects = "float = false"
         self._rule_serial = getattr(self, "_rule_serial", 0) + 1
         name = re.sub(r"[^A-Za-z0-9._-]", "", str(monitor.get("name") or ""))[:40]
         lua = ('if AURORAPULSE_VIDEO_RULE then AURORAPULSE_VIDEO_RULE:set_enabled(false) end '
                'AURORAPULSE_VIDEO_RULE = hl.window_rule({ name = "aurorapulse-video-%d-%d", '
-               'match = { class = "^org\\.aurorapulse\\.video$" }, float = true, '
-               'size = { %d, %d }, move = { %d, %d }, monitor = "%s" })'
-               % (os.getpid(), self._rule_serial, w, h, x, y, name))
+               'match = { class = "^org\\.aurorapulse\\.video$" }, %s, monitor = "%s" })'
+               % (os.getpid(), self._rule_serial, effects, name))
         try:
             proc = subprocess.run(["hyprctl", "eval", lua], capture_output=True,
                                   text=True, timeout=4)
@@ -2498,8 +2514,13 @@ class Daemon:
                 return
             geometry = self.video_window()
             if geometry:
-                self._place_video(geometry)
-                self.cmd_video_window({})
+                if self._on("pipFloating", True):
+                    self._place_video(geometry)
+                    if self._on("pipPinned", False) and not geometry.get("pinned"):
+                        address = "address:%s" % geometry["address"]
+                        self._dispatch('hl.dsp.window.pin({ window = "%s" })' % address,
+                                       "pin", address)
+                self._emit_video_window()
                 return
             time.sleep(0.25)
 
@@ -2512,6 +2533,7 @@ class Daemon:
         address = "address:%s" % geometry["address"]
         if action in ("float", "unfloat"):
             want = action == "float"
+            self.set_setting("pipFloating", want)
             if bool(geometry.get("floating")) != want:
                 self._dispatch('hl.dsp.window.float({ window = "%s", action = "toggle" })'
                                % address, "togglefloating", address)
@@ -2521,18 +2543,22 @@ class Daemon:
             size = textutil.text(message.get("size"), 4)
             if size in self.PIP_SCALE:
                 self.set_setting("pipSize", size)
+                self.set_setting("pipFloating", True)
                 self._place_video(geometry, size=size)
         elif action == "corner":
             corner = textutil.text(message.get("corner"), 4)
             if corner in ("tl", "tr", "bl", "br"):
                 self.set_setting("pipCorner", corner)
+                self.set_setting("pipFloating", True)
                 self._place_video(geometry, corner=corner)
         elif action == "fullscreen":
             self._dispatch('hl.dsp.focus({ window = "%s" })' % address, "focuswindow", address)
             self._dispatch('hl.dsp.window.fullscreen({ window = "%s", mode = "fullscreen" })'
                            % address, "fullscreen", "0")
         elif action == "pin":
+            self.set_setting("pipPinned", not geometry.get("pinned"))
             if not geometry.get("floating"):
+                self.set_setting("pipFloating", True)
                 self._place_video(geometry)
             self._dispatch('hl.dsp.window.pin({ window = "%s" })' % address, "pin", address)
         elif action == "focus":
@@ -2540,10 +2566,24 @@ class Daemon:
         elif action == "close":
             self._dispatch('hl.dsp.window.close({ window = "%s" })' % address,
                            "closewindow", address)
-        return self.cmd_video_window({})
+        if action in ("float", "unfloat", "size", "corner", "pin"):
+            self.emit({"type": "settings", "settings": self.settings()})
+        return self._emit_video_window()
 
     def cmd_video_window(self, _m):
+        return self._emit_video_window(learn=True)
+
+    def _emit_video_window(self, learn=False):
+        """Tell the panel about the video window. With learn, also remember
+        whether it floats and is pinned, however it got that way - the buttons
+        here or Hyprland's own keys - so the next window opens the same. Not
+        straight after we changed it ourselves: the compositor may not have
+        caught up, and the setting was saved already."""
         geometry = self.video_window()
+        if learn and geometry:
+            self.set_setting("pipFloating", bool(geometry.get("floating")))
+            if geometry.get("floating"):
+                self.set_setting("pipPinned", bool(geometry.get("pinned")))
         self.emit({"type": "pip", "window": geometry,
                    "monitors": [str(m.get("name") or "") for m in self._monitors()],
                    "floating": bool(geometry and geometry.get("floating")),
@@ -2993,6 +3033,10 @@ class Daemon:
             # A start point travels with the file. A seek sent straight after
             # loadfile lands before the file is open and is dropped.
             options.append("start=%d" % int(start_seconds))
+        if self._session_video and not self._on("subtitlesEnabled", False):
+            # Otherwise mpv shows a track the file marks as default until the
+            # subtitle setting is applied, a moment after playback starts.
+            options.append("sid=no")
         if options:
             ok, data = player.request("loadfile", url, "replace", -1,
                                       ",".join(options))
@@ -3204,30 +3248,164 @@ class Daemon:
         """List, choose or turn off subtitles for the video playing."""
         action = textutil.text(message.get("action"), 12) or "list"
         player = self.player
-        if action == "off" and player is not None:
-            player.set_property("sid", "no")
+        if action == "off":
+            # Remembered: the next video starts without them too.
+            self.set_setting("subtitlesEnabled", False, apply=False)
+            if player is not None:
+                player.set_property("sid", "no")
+            self.emit({"type": "settings", "settings": self.settings()})
         elif action == "select":
             key = textutil.text(message.get("key"), 20)
+            lang = ""
             if key.startswith("mpv:") and player is not None:
                 try:
-                    player.set_property("sid", int(key[4:]))
+                    track = int(key[4:])
                 except ValueError:
-                    pass
+                    track = None
+                if track is not None:
+                    player.set_property("sid", track)
+                    lang = next((str(t.get("lang") or "") for t in self._sub_tracks()
+                                 if t.get("id") == track), "")
             elif key.startswith("ext:"):
                 try:
                     n = int(key[4:])
                 except ValueError:
                     n = -1
+                if 0 <= n < len(self._sub_options):
+                    lang = str(self._sub_options[n].get("lang") or "")
+            # On for the next video too, in this track's language. Saved
+            # without re-applying, which would pick by language and could
+            # swap the track just chosen for another one.
+            self.set_setting("subtitlesEnabled", True, apply=False)
+            if lang:
+                self.set_setting("subtitleLanguage", lang.lower()[:12], apply=False)
+            self.emit({"type": "settings", "settings": self.settings()})
+            if key.startswith("ext:"):
                 # The fetch can take a moment; do it off the control lane.
                 POOL.submit(lambda: (self._load_subtitle(n), time.sleep(0.3),
                                      self._emit_subtitles()))
                 return None
         elif action == "size":
-            self.set_setting("subtitleSize", message.get("size"))
+            self.set_setting("subtitleSize", message.get("size"), apply=False)
             if player is not None:
                 player.set_property("sub-scale", float(self._on("subtitleSize", 1.0)))
         time.sleep(0.15)
         self._emit_subtitles(message.get("id"))
+        return None
+
+    # -- picture quality -----------------------------------------------------
+
+    def _variants(self):
+        """The renditions an adaptive (HLS) stream offers, best first.
+
+        mpv lists each rendition as its own video and audio track, tagged
+        with the rendition's program and its playlist bitrate, and switches
+        between them live when both tracks of another program are chosen.
+        Only tracks carrying an HLS bitrate count: an MPEG-TS broadcast can
+        hold several programs too, and those are different channels."""
+        player = self.player
+        if player is None or not self._session_video:
+            return []
+        ok, tracks = player.request("get_property", "track-list")
+        if not ok or not isinstance(tracks, list):
+            return []
+        programs = {}
+        for track in tracks:
+            if (not isinstance(track, dict) or track.get("program-id") is None
+                    or track.get("hls-bitrate") is None):
+                continue
+            entry = programs.setdefault(track.get("program-id"),
+                                        {"program": track.get("program-id")})
+            if track.get("type") == "video" and "video" not in entry:
+                entry.update(video=track.get("id"),
+                             height=textutil.int_in(track.get("demux-h"), 0, 10000, 0),
+                             bitrate=textutil.int_in(track.get("hls-bitrate"), 0, 1 << 31, 0),
+                             selected=bool(track.get("selected")))
+            elif track.get("type") == "audio" and "audio" not in entry:
+                entry["audio"] = track.get("id")
+        variants = [v for v in programs.values() if "video" in v]
+        if len(variants) < 2:
+            return []
+        variants.sort(key=lambda v: (v["height"], v["bitrate"]), reverse=True)
+        return variants
+
+    @staticmethod
+    def _quality_tier(height):
+        if not height:
+            return ""
+        # Anything sharper than PAL's 576 lines is HD: streams come in
+        # 684p and 640p as well as 720p.
+        return "4K" if height >= 2000 else "FHD" if height >= 1000 \
+            else "HD" if height > 576 else "SD"
+
+    @staticmethod
+    def _pick_variant(variants, preference):
+        """The best rendition no taller than the preference; the smallest
+        one when every rendition is taller."""
+        if not str(preference).isdigit():
+            return variants[0]
+        limit = int(preference)
+        fitting = [v for v in variants if v["height"] and v["height"] <= limit]
+        return fitting[0] if fitting else variants[-1]
+
+    def _select_variant(self, variant):
+        player = self.player
+        if player is None:
+            return
+        player.set_property("vid", variant["video"])
+        if variant.get("audio") is not None:
+            player.set_property("aid", variant["audio"])
+
+    def _apply_quality(self):
+        """Put the stream on the rendition Settings prefer. A rendition of
+        the same height is left alone, so choosing one by hand and saving
+        that height as the preference does not switch it again."""
+        variants = self._variants()
+        if variants:
+            chosen = self._pick_variant(variants, self._on("tvQuality", "best"))
+            current = next((v for v in variants if v["selected"]), None)
+            if current is None or (chosen["height"] or chosen["bitrate"]) != \
+                    (current["height"] or current["bitrate"]):
+                self._select_variant(chosen)
+                time.sleep(0.3)
+        self._emit_quality()
+
+    def _emit_quality(self, ident=None):
+        variants = self._variants()
+        choices, selected, short = [], "", ""
+        for v in variants:
+            key = "p:%s" % v["program"]
+            size = ("%dp" % v["height"]) if v["height"] else ""
+            rate = ("%.1f Mbps" % (v["bitrate"] / 1e6)) if v["bitrate"] else ""
+            label = " · ".join(x for x in (self._quality_tier(v["height"]), size, rate) if x)
+            choices.append({"key": key, "label": textutil.text(label or key, 40)})
+            if v["selected"]:
+                selected = key
+                short = self._quality_tier(v["height"]) or "Q"
+        self.emit({"type": "quality", "id": ident, "choices": choices,
+                   "selected": selected, "short": short,
+                   "preference": str(self._on("tvQuality", "best") or "best")})
+
+    def cmd_quality(self, message):
+        """List or choose the picture quality of the stream playing. The
+        choice is remembered as a height, so the next channel opens at the
+        nearest rendition that is no taller; the top one means "best"."""
+        action = textutil.text(message.get("action"), 12) or "list"
+        variants = self._variants()
+        if action == "best" and variants:
+            self.set_setting("tvQuality", "best")
+            self._select_variant(variants[0])
+        elif action == "select":
+            key = textutil.text(message.get("key"), 20)
+            for n, v in enumerate(variants):
+                if "p:%s" % v["program"] == key:
+                    self._select_variant(v)
+                    self.set_setting("tvQuality", "best" if n == 0 or not v["height"]
+                                     else str(v["height"]))
+                    break
+        if action in ("best", "select"):
+            time.sleep(0.3)
+        self._emit_quality(message.get("id"))
         return None
 
     ASPECTS = {"16:9": "16:9", "4:3": "4:3", "21:9": "2.33", "1:1": "1"}
@@ -3677,6 +3855,7 @@ class Daemon:
                 self._apply_aspect()
                 if self._session_video:
                     POOL.submit(self._apply_subtitles)
+                    POOL.submit(self._apply_quality)
                 current = self._current or {}
                 if current.get("uid") and current.get("uid") != getattr(self, "_last_played", None):
                     self._last_played = current.get("uid")
@@ -3858,6 +4037,13 @@ DEFAULT_SETTINGS = {
     "alarmEnabled": False, "alarmTime": "07:00", "alarmDays": "1,2,3,4,5,6,7",
     "alarmFadeSec": 60, "alarmVolume": 50,
     "subtitlesEnabled": False, "subtitleLanguage": "en", "subtitleSize": 1.0,
+    "tvQuality": "best",
+    # How the video window was left: floating at pipSize in pipCorner, or
+    # tiled; pinned on top of every workspace or not.
+    "pipFloating": True, "pipPinned": False,
+    # The browsing that led to what is playing, as JSON, so the panel can
+    # open on it at start-up.
+    "lastBrowse": "",
     "lyricsSize": "m", "audioOutput": "",
     "downloadAudioFormat": "mp3", "downloadVideoFormat": "mp4",
     "downloadVideoQuality": "1080p", "downloadArtwork": True,
