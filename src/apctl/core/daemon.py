@@ -26,6 +26,7 @@ import random
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -1263,15 +1264,18 @@ class Daemon:
                 pass
 
         def move():
-            from .downloads import recordings_dir, _safe_name
+            from .downloads import recordings_dir, _safe_name, staged_file, make_readable
             host = recording["host"]
             # Wait until the file has something in it and has stopped
             # growing; the move to ~/Music may be a copy across filesystems.
             size, steady = -1, 0
             for _ in range(48):
                 time.sleep(0.25)
+                # The player is still running and its sandbox can write here:
+                # measure only a plain file, never what a link points at.
                 try:
-                    now_size = os.path.getsize(host)
+                    info = os.lstat(host)
+                    now_size = info.st_size if stat.S_ISREG(info.st_mode) else 0
                 except OSError:
                     now_size = 0
                 steady = steady + 1 if now_size == size else 0
@@ -1295,10 +1299,19 @@ class Daemon:
             while os.path.exists(target):
                 target = os.path.join(folder, "%s (%d).%s" % (stem, n, recording["ext"]))
                 n += 1
+            if not staged_file(os.path.dirname(host), host):
+                self._notice("The recording could not be saved",
+                             "The player left something other than a plain file.")
+                return
             try:
                 shutil.move(host, target)
-                os.chmod(target, 0o644)
+                # chmod through a descriptor that refuses links: os.chmod
+                # followed a symlink swapped in after the check, which would
+                # have changed the permissions of whatever it pointed at.
+                make_readable(target)
             except OSError as exc:
+                if os.path.islink(target):
+                    os.unlink(target)
                 self._notice("The recording could not be saved", str(exc))
                 return
             seconds = int(time.time() - recording["since"])

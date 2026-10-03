@@ -211,11 +211,21 @@ could not read or write anything of yours outside that folder.
 
 **Downloads** land in the staging folder and are moved into Music or Videos
 under a name nothing else uses, so a download cannot overwrite, or delete as
-an intermediate, a file it did not create.
+an intermediate, a file it did not create. The `FILE` path yt-dlp prints is a
+request, not a fact: before anything moves, it must name a regular file - not
+a symlink, directory or device, checked with `lstat` - directly inside that
+job's staging folder, and the same holds for a cover saved beside it. Anything
+else fails the job with nothing moved. yt-dlp and its sandbox have exited by
+then, so the file cannot be swapped between the check and the move.
 
 **Recordings** are written by the player into one bound folder
 (`Music/AuroraPulse/Recordings/.recording`) with at least 1 GB free required,
-and are stopped when free space drops under 300 MB.
+and are stopped when free space drops under 300 MB. The player keeps running
+while a recording is collected, so its file is measured with `lstat`, moved
+only if it is a regular file, and made readable through a descriptor opened
+with `O_NOFOLLOW`: a symlink swapped in at the last moment is refused and
+removed, never followed to change the permissions of what it points at.
+`SandboxOutputContainment` in `tests/test_features.py` covers both.
 
 **Casting** is the only part that talks to private addresses. It sends an SSDP
 search (multicast, and directly to each address of the local subnet, since the

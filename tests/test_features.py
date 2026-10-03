@@ -944,6 +944,119 @@ class Recording(TempDir):
 
 
 
+class SandboxOutputContainment(TempDir):
+    """A path a sandboxed tool reports is a request, not a fact. Nothing of
+    the user's outside the job's own folder is ever moved, renamed or
+    re-permissioned on the strength of it."""
+
+    def setUp(self):
+        super().setUp()
+        from apctl.core import downloads
+        self.downloads = downloads
+        self.staging = os.path.join(self.dir, "Music", ".aurorapulse-j1")
+        os.makedirs(self.staging)
+        self.victim = os.path.join(self.dir, "thesis.pdf")
+        with open(self.victim, "wb") as handle:
+            handle.write(b"the user's own file")
+        os.chmod(self.victim, 0o600)
+
+    def victim_untouched(self):
+        self.assertTrue(os.path.isfile(self.victim), "the user's file was moved")
+        self.assertEqual(os.stat(self.victim).st_mode & 0o777, 0o600, "its permissions changed")
+
+    def test_only_a_plain_file_directly_in_staging_counts(self):
+        staged = self.downloads.staged_file
+        good = os.path.join(self.staging, "Song.mp3")
+        with open(good, "wb") as handle:
+            handle.write(b"x")
+        self.assertEqual(staged(self.staging, good), good)
+        self.assertEqual(staged(self.staging, self.victim), "", "outside staging")
+        self.assertEqual(staged(self.staging, os.path.join(self.staging, "..", "..", "thesis.pdf")), "")
+        os.symlink(self.victim, os.path.join(self.staging, "Link.mp3"))
+        self.assertEqual(staged(self.staging, os.path.join(self.staging, "Link.mp3")), "", "a symlink")
+        os.makedirs(os.path.join(self.staging, "sub"))
+        self.assertEqual(staged(self.staging, os.path.join(self.staging, "sub")), "", "a directory")
+        nested = os.path.join(self.staging, "sub", "Deep.mp3")
+        open(nested, "wb").close()
+        self.assertEqual(staged(self.staging, nested), "", "not directly in staging")
+        self.assertEqual(staged(self.staging, ""), "")
+
+    def test_publish_refuses_a_path_outside_staging(self):
+        folder = os.path.join(self.dir, "Music")
+        with self.assertRaises(ValueError):
+            self.downloads.Downloads._publish(self.staging, self.victim, folder)
+        self.victim_untouched()
+
+    def test_a_cover_that_is_a_symlink_is_left_alone(self):
+        folder = os.path.join(self.dir, "Music")
+        song = os.path.join(self.staging, "Song.mp3")
+        with open(song, "wb") as handle:
+            handle.write(b"x")
+        os.symlink(self.victim, os.path.join(self.staging, "Song.jpg"))
+        final = self.downloads.Downloads._publish(self.staging, song, folder)
+        self.assertEqual(os.path.basename(final), "Song.mp3")
+        self.assertFalse(os.path.lexists(os.path.join(folder, "Song.jpg")))
+        self.victim_untouched()
+
+    def test_a_downloader_naming_the_users_file_moves_nothing(self):
+        """The whole job, with a stand-in downloader that exits 0 and claims a
+        file of the user's as its result."""
+        downloads = self.downloads
+        saved = (downloads.audio_dir, downloads.video_dir, sandbox.tool_command)
+        downloads.audio_dir = downloads.video_dir = lambda: os.path.join(self.dir, "Music")
+        sandbox.tool_command = lambda argv, **_k: (
+            ["/bin/sh", "-c", "printf 'FILE %s\\n'" % self.victim], [])
+        job = {"id": "j1", "kind": "audio", "artist": "A", "title": "T", "format": "mp3",
+               "url": "https://www.youtube.com/watch?v=x", "progress": 0.0, "state": "running"}
+        worker = downloads.Downloads.__new__(downloads.Downloads)
+        worker._lock = threading.Lock()
+        worker._proc = None
+        worker.log = lambda _message: None
+        worker._changed = lambda force=False: None
+        try:
+            worker._download(job)
+        finally:
+            downloads.audio_dir, downloads.video_dir, sandbox.tool_command = saved
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("outside its own folder", job["error"])
+        self.victim_untouched()
+        self.assertEqual(os.listdir(os.path.join(self.dir, "Music")), [], "nothing published")
+
+    def test_a_recording_swapped_for_a_symlink_is_not_followed(self):
+        """The player keeps running while its recording is collected, so its
+        file may be a symlink by then. The target is neither moved nor
+        re-permissioned (chmod 644 would expose a private key)."""
+        events = []
+        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=events.append)
+        d.player = FakePlayer()
+        # Big enough to count as a recording, so the old code went on to the
+        # move and the chmod - which followed the link.
+        with open(self.victim, "wb") as handle:
+            handle.write(b"k" * (64 << 10))
+        host = os.path.join(self.staging, "rec.mp3")
+        os.symlink(self.victim, host)
+        d._recording = {"since": time.time() - 30, "title": "Station", "host": host,
+                        "ext": "mp3"}
+        d.cmd_scan = lambda _m: None
+        original = self.downloads.recordings_dir
+        self.downloads.recordings_dir = lambda: os.path.join(self.dir, "Recordings")
+        try:
+            self.assertTrue(d._finish_recording().wait(20))
+            time.sleep(0.3)
+        finally:
+            self.downloads.recordings_dir = original
+        self.victim_untouched()
+        recordings = os.path.join(self.dir, "Recordings")
+        self.assertFalse(os.path.isdir(recordings) and os.listdir(recordings))
+
+    def test_make_readable_refuses_a_symlink(self):
+        link = os.path.join(self.staging, "late.mp3")
+        os.symlink(self.victim, link)
+        with self.assertRaises(OSError):
+            self.downloads.make_readable(link)
+        self.victim_untouched()
+
+
 # -- picture quality -----------------------------------------------------------
 
 def hls_tracks(selected=0):

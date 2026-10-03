@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -56,6 +57,42 @@ def video_dir():
 
 def recordings_dir():
     return os.path.join(audio_dir(), "Recordings")
+
+
+def staged_file(staging, path):
+    """`path` if it names a regular file directly inside `staging`, else "".
+
+    What a sandboxed tool reports is a request, not a fact. yt-dlp prints the
+    file it wrote, and moving that path unchecked would let a compromised
+    downloader have any file of the user's moved out of place. Only a plain
+    file - not a symlink, directory or device, checked without following
+    links - sitting in this job's own folder counts.
+    """
+    if not path or not staging or os.path.islink(staging):
+        return ""
+    name = os.path.basename(path)
+    candidate = os.path.join(staging, name)
+    if name in ("", ".", "..") or \
+            os.path.normpath(path) != os.path.normpath(candidate):
+        return ""
+    try:
+        info = os.lstat(candidate)
+    except OSError:
+        return ""
+    return candidate if stat.S_ISREG(info.st_mode) else ""
+
+
+def make_readable(path):
+    """chmod 644 a file we just moved into place, through a descriptor opened
+    without following links: a symlink swapped in by a sandboxed writer is
+    refused (OSError) instead of having its target's permissions changed."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file: %s" % path)
+        os.fchmod(fd, 0o644)
+    finally:
+        os.close(fd)
 
 
 def _safe_name(value, limit=120):
@@ -274,35 +311,48 @@ class Downloads:
             elif line.startswith("ERROR"):
                 last_error = line
         code = proc.wait()
+        proc.stdout.close()
         self._proc = None
         try:
             with self._lock:
                 if job["state"] == "cancelled":
                     return
-            if code == 0 and path and os.path.exists(path):
-                final = self._publish(staging, path, folder)
+            # yt-dlp has exited and its sandbox with it, so nothing can swap
+            # the file between this check and the move.
+            result = staged_file(staging, path) if code == 0 else ""
+            if result:
+                final = self._publish(staging, result, folder)
                 with self._lock:
                     job.update(state="done", progress=100.0, path=final, speed="", eta="")
             else:
+                if code == 0 and path:
+                    error = ("the downloader named a file outside its own folder; "
+                             "nothing was moved")
+                    self.log("download %s: refused result %r" % (job["id"], path[:200]))
+                else:
+                    error = last_error or "yt-dlp exited with %d" % code
                 with self._lock:
-                    job.update(state="failed", error=textutil.text(
-                        last_error or "yt-dlp exited with %d" % code, 200))
+                    job.update(state="failed", error=textutil.text(error, 200))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
     @staticmethod
     def _publish(staging, path, folder):
         """Move a finished file (and its cover, if saved beside it) out of
-        staging under a name nothing else is using."""
-        stem, ext = os.path.splitext(os.path.basename(path))
+        staging under a name nothing else is using. Both must be plain files
+        in this job's staging folder; anything else is never touched."""
+        source = staged_file(staging, path)
+        if not source:
+            raise ValueError("not a file in this job's staging folder")
+        stem, ext = os.path.splitext(os.path.basename(source))
         target = os.path.join(folder, stem + ext)
         n = 2
         while os.path.exists(target):
             target = os.path.join(folder, "%s (%d)%s" % (stem, n, ext))
             n += 1
-        shutil.move(path, target)
-        cover = os.path.join(staging, stem + ".jpg")
-        if os.path.exists(cover):
+        shutil.move(source, target)
+        cover = staged_file(staging, os.path.join(staging, stem + ".jpg"))
+        if cover:
             new_stem = os.path.splitext(os.path.basename(target))[0]
             try:
                 shutil.move(cover, os.path.join(folder, new_stem + ".jpg"))
