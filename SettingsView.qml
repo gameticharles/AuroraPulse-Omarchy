@@ -42,6 +42,17 @@ Item {
     return level === "error" ? "#e06c75" : level === "warn" ? "#e5c07b" : root.accent
   }
 
+  // Off-screen helper for "copy": package names for the Omarchy installer.
+  TextEdit {
+    id: copyArea
+    visible: false
+  }
+  function copyText(text) {
+    copyArea.text = text
+    copyArea.selectAll()
+    copyArea.copy()
+  }
+
   function value(key, fallback) {
     var s = root.settings
     if (s && s[key] !== undefined && s[key] !== null) return s[key]
@@ -237,10 +248,16 @@ Item {
           }
           C.Button {
             visible: (root.health.installs || []).length > 1
-            text: "Install all"
+            text: "Copy search for all"
+            icon: Model.ICON.copy
+            onClicked: root.copyText(Model.installerSearch(root.health.installs || []))
+          }
+          C.Button {
+            visible: (root.health.installs || []).length > 0
+            text: "Open Install menu"
             icon: Model.ICON.download
             primary: true
-            onClicked: root.command("health_install", {})
+            onClicked: root.command("health_watch", { open: true })
           }
           C.Button {
             text: "Check again"
@@ -248,11 +265,23 @@ Item {
             onClicked: root.command("health", {})
           }
         }
+        // AuroraPulse never runs a package manager: it names what is missing
+        // and opens Omarchy's own menu, where the user picks and confirms.
+        Text {
+          Layout.fillWidth: true
+          visible: (root.health.installs || []).length > 0 && (root.health.installing || []).length === 0
+          text: "Install from the Omarchy menu (Super + Space) \u203a Install \u203a Package: copy the "
+                + "search here, paste it there, press Tab on each package, then Enter. "
+                + "This page updates by itself."
+          color: root.dim
+          font.pixelSize: 10
+          wrapMode: Text.WordWrap
+        }
         Text {
           Layout.fillWidth: true
           visible: (root.health.installing || []).length > 0
-          text: "Installing " + (root.health.installing || []).join(", ")
-                + " in a terminal window: enter your password there. This page updates by itself."
+          text: "Waiting for " + (root.health.installing || []).join(", ")
+                + " to be installed through the Omarchy menu. This page updates by itself."
           color: root.accent
           font.pixelSize: 10
           wrapMode: Text.WordWrap
@@ -281,7 +310,7 @@ Item {
               }
               Text {
                 Layout.fillWidth: true
-                text: modelData.detail + (modelData.fix && !modelData.package ? "\n" + modelData.fix : "")
+                text: modelData.detail + (modelData.fix ? "\n" + modelData.fix : "")
                 color: root.dim
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
@@ -290,12 +319,15 @@ Item {
             C.Button {
               Layout.alignment: Qt.AlignVCenter
               visible: !modelData.ok && !!modelData.package
-              readonly property bool busy: (root.health.installing || []).indexOf(modelData.package) >= 0
-              enabled: !busy
-              text: busy ? "Installing…" : modelData.action === "update" ? "Update" : "Install"
-              icon: Model.ICON.download
-              onClicked: root.command("health_install", { packages: [modelData.package],
-                                                          update: modelData.action === "update" })
+              readonly property bool update: modelData.action === "update"
+              readonly property bool waiting: (root.health.installing || []).indexOf(modelData.package) >= 0
+              text: waiting ? "Waiting…" : update ? "Open Update menu" : "Copy search"
+              icon: update ? Model.ICON.download : Model.ICON.copy
+              onClicked: {
+                if (!update) root.copyText(Model.installerSearch([modelData.package]))
+                root.command("health_watch", { packages: [modelData.package], update: update,
+                                               open: update })
+              }
             }
           }
         }

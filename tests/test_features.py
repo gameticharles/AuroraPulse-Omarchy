@@ -587,18 +587,76 @@ class Outputs(unittest.TestCase):
         self.assertEqual(outputs.connect_bluetooth("AA:BB; reboot", wait=0), "")
 
 
-class Installing(unittest.TestCase):
-    def test_only_known_packages_reach_the_terminal(self):
-        argv = doctor.install_command(["avahi", "x; rm -rf ~", "not-a-package"])
-        self.assertIsNotNone(argv)
-        self.assertIn("avahi", argv[-1])
-        self.assertNotIn("rm -rf", " ".join(argv))
-        self.assertNotIn("not-a-package", " ".join(argv))
-        self.assertIsNone(doctor.install_command(["x; rm -rf ~"]))
+class Installing(TempDir):
+    """AuroraPulse never installs anything: it names what is missing and opens
+    the Omarchy menu, where the user picks and confirms."""
 
-    def test_updates_use_a_full_sync(self):
-        argv = doctor.install_command(["yt-dlp"], update=True)
-        self.assertIn("pacman -Syu --needed yt-dlp", argv[-1])
+    CHECKS = [
+        {"name": "mpv", "ok": False, "required": True, "package": "mpv", "action": "install"},
+        {"name": "avahi-browse", "ok": False, "required": False, "package": "avahi",
+         "action": "install"},
+        {"name": "yt-dlp version", "ok": False, "required": False, "package": "yt-dlp",
+         "action": "update"},
+        {"name": "ffprobe", "ok": True, "required": True, "package": "", "action": ""},
+    ]
+
+    def test_only_known_failing_packages_are_named(self):
+        wanted = doctor.wanted_packages(["avahi", "x; rm -rf ~", "not-a-package", "ffmpeg"],
+                                        self.CHECKS)
+        self.assertEqual(wanted, ["avahi"])
+        self.assertEqual(doctor.wanted_packages(None, self.CHECKS), ["mpv", "avahi"])
+        self.assertEqual(doctor.wanted_packages(None, self.CHECKS, update=True), ["yt-dlp"])
+
+    def test_the_buttons_only_open_the_omarchy_menu(self):
+        import subprocess as _subprocess
+        launched = []
+        saved = (_subprocess.Popen, doctor.binaries, doctor.ytdlp, doctor.python_modules,
+                 daemon.shutil.which)
+        _subprocess.Popen = lambda argv, **_k: launched.append(list(argv))
+        doctor.binaries = lambda: [dict(c) for c in self.CHECKS]
+        doctor.ytdlp = lambda: None
+        doctor.python_modules = lambda: None
+        daemon.shutil.which = lambda name, *a, **k: "/usr/bin/" + name
+        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=lambda _m: None)
+        d.cmd_health = lambda _m: None
+        d._watch_install = lambda *a: None
+        try:
+            d.cmd_health_watch({"open": True})
+            d.cmd_health_watch({"open": True, "update": True})
+            d.cmd_health_watch({"packages": ["mpv"]})
+        finally:
+            (_subprocess.Popen, doctor.binaries, doctor.ytdlp, doctor.python_modules,
+             daemon.shutil.which) = saved
+        self.assertEqual(launched, [["/usr/bin/omarchy-menu", "summon", "install"],
+                                    ["/usr/bin/omarchy-menu", "summon", "update"]])
+        self.assertEqual(sorted(d._installing), ["avahi", "mpv", "yt-dlp"])
+
+    def test_no_install_command_or_privilege_anywhere_in_the_plugin(self):
+        """What the marketplace scan reads (code and the root README; not docs
+        or tests) names no package-manager command and no sudo or pkexec, so
+        the listing can offer the standard one-command install."""
+        import re
+        import subprocess as _subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        manager = re.compile(
+            r"\bomarchy\s+pkg\s+(?:add|drop|remove|update)\b"
+            r"|\bomarchy-pkg-(?:add|drop|remove|install|aur-add|aur-install)\b"
+            r"|\b(?:pacman|paru|yay|apt|apt-get|dnf|zypper|apk)\s+(?:-[A-Za-z]*[SRU]|install|remove|upgrade|add|del)\b"
+            r"|\b(?:pip|pip3|pipx)\s+install\b", re.I)
+        privilege = re.compile(r"\b(?:sudo|pkexec)\b", re.I)
+        scanned = (".py", ".qml", ".js", ".sh", ".lua", ".toml", ".yml", ".yaml")
+        paths = _subprocess.run(["git", "-C", root, "ls-files"], capture_output=True,
+                                text=True).stdout.split()
+        offenders = []
+        for path in paths:
+            top = path.split("/")[0]
+            if top in ("docs", "tests") or not (path == "README.md" or path.endswith(scanned)):
+                continue
+            with open(os.path.join(root, path), encoding="utf-8", errors="replace") as handle:
+                for number, line in enumerate(handle, 1):
+                    if manager.search(line) or privilege.search(line):
+                        offenders.append("%s:%d: %s" % (path, number, line.strip()[:100]))
+        self.assertEqual(offenders, [])
 
     def test_installable_and_prompt(self):
         checks = [
@@ -621,35 +679,53 @@ class Installing(unittest.TestCase):
 
 
 class HealthPrompt(TempDir):
-    def test_first_run_prompts_and_not_now_holds(self):
+    MISSING_MPV = [{"name": "mpv", "ok": False, "required": True, "package": "mpv",
+                    "action": "install", "level": "error", "detail": "", "fix": ""}]
+    OPTIONAL_WPCTL = [{"name": "wpctl", "ok": False, "required": False,
+                       "package": "wireplumber", "action": "install",
+                       "level": "warn", "detail": "", "fix": ""}]
+
+    def run_with(self, binaries, call):
         events = []
-        d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=events.append)
-        original = doctor.binaries
-        doctor.binaries = lambda: [{"name": "wpctl", "ok": False, "required": False,
-                                    "package": "wireplumber", "action": "install",
-                                    "level": "warn", "detail": "", "fix": ""}]
+        self.d.emit = events.append
+        saved = (doctor.binaries, doctor.ytdlp, doctor.python_modules)
+        doctor.binaries = lambda: [dict(c) for c in binaries]
+        doctor.ytdlp = lambda: None
+        doctor.python_modules = lambda: None
         try:
-            d.startup_health()
-            prompts = [e for e in events if e.get("type") == "health_prompt"]
-            self.assertEqual(len(prompts), 1)
-            self.assertTrue(prompts[0]["first_run"])
-            self.assertIn("wpctl", prompts[0]["missing"])
-            # Not first run any more: an optional tool alone does not nag.
-            events.clear()
-            d.startup_health()
-            self.assertFalse([e for e in events if e.get("type") == "health_prompt"])
-            # A required one does, until dismissed.
-            doctor.binaries = lambda: [{"name": "mpv", "ok": False, "required": True,
-                                        "package": "mpv", "action": "install",
-                                        "level": "error", "detail": "", "fix": ""}]
-            d.startup_health()
-            self.assertTrue([e for e in events if e.get("type") == "health_prompt"])
-            events.clear()
-            d.cmd_health_dismiss({"names": ["mpv"]})
-            d.startup_health()
-            self.assertFalse([e for e in events if e.get("type") == "health_prompt"])
+            call()
         finally:
-            doctor.binaries = original
+            doctor.binaries, doctor.ytdlp, doctor.python_modules = saved
+        return [e for e in events if e.get("type") == "health_prompt"]
+
+    def setUp(self):
+        super().setUp()
+        self.d = Daemon(store=Store(self.dir, self.dir, self.dir), emit=lambda _m: None)
+
+    def test_first_run_names_everything_then_only_what_matters(self):
+        first = self.run_with(self.OPTIONAL_WPCTL, self.d.startup_health)
+        self.assertTrue(first[-1]["first_run"])
+        self.assertEqual(first[-1]["missing"], ["wpctl"])
+        # Not the first run any more: an optional tool alone clears the banner.
+        later = self.run_with(self.OPTIONAL_WPCTL, self.d.startup_health)
+        self.assertEqual(later[-1]["missing"], [])
+
+    def test_the_banner_stays_until_the_package_is_there(self):
+        self.run_with([], self.d.startup_health)                  # not the first run
+        for _ in range(3):                                        # every panel open
+            prompt = self.run_with(self.MISSING_MPV, lambda: self.d.cmd_health_prompt({}))
+            self.assertEqual(prompt[-1]["missing"], ["mpv"])
+            self.assertEqual(prompt[-1]["installs"], ["mpv"])
+            self.assertTrue(prompt[-1]["required"])
+        fixed = self.run_with([], lambda: self.d.cmd_health_prompt({}))
+        self.assertEqual(fixed[-1]["missing"], [], "installed: the banner clears")
+
+    def test_copy_names_only_what_the_banner_names(self):
+        self.run_with([], self.d.startup_health)
+        prompt = self.run_with(self.MISSING_MPV + self.OPTIONAL_WPCTL,
+                               lambda: self.d.cmd_health_prompt({}))
+        self.assertEqual(prompt[-1]["missing"], ["mpv"])
+        self.assertEqual(prompt[-1]["installs"], ["mpv"], "not the unnamed optional one")
 
 
 # -- podcasts, scrobbling, the guide, MPRIS ---------------------------------------

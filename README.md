@@ -12,16 +12,18 @@ sandbox. The widget itself only renders JSON from a daemon.
 ## Install
 
 ```bash
-omarchy plugin add /path/to/this/repo     # from a checkout
-omarchy plugin enable aurora-pulse
+omarchy plugin add https://github.com/gameticharles/AuroraPulse-Omarchy.git --enable
+git -C ~/.config/omarchy/plugins/aurora-pulse log -1 --format='%h %s'   # the commit you got
 ```
 
 Pick **AuroraPulse** in the bar, then click its icon. If anything it needs is
-missing - and on the very first run, anything it could use - a banner says
-what, with **Install all** and **Review in Health**. Settings › Health lists
-every dependency with an **Install** (or **Update**) button; installing opens
-a terminal where you enter your password, and the page refreshes itself when
-the packages arrive.
+missing - and on the very first run, anything it could use - a banner names
+it, with **Copy package names** and **Open Install menu**. AuroraPulse never
+installs anything itself: install the packages from the Omarchy menu
+(Super + Space) › Install › Package, where you pick and confirm them. Settings ›
+Health lists every dependency, what it is for and whether it is there, and
+refreshes itself once the packages arrive. An outdated yt-dlp is updated from
+the Omarchy menu › Update › Omarchy.
 
 ## What it does
 

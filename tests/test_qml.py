@@ -11,6 +11,7 @@ Run with:  python3 tests/test_qml.py
 """
 
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -1351,6 +1352,31 @@ class CountsAreReadable(unittest.TestCase):
                          "0 stations|1 station|999 stations|1,000 stations|"
                          "59,826 stations|11,014 channels",
                          "a catalogue count has to be legible at a glance")
+
+
+
+class InstallerSearch(unittest.TestCase):
+    def test_the_copied_search_finds_exactly_the_missing_packages(self):
+        """Omarchy's package picker is an fzf list, where a space means "and":
+        "mpv bubblewrap" matched nothing. The copied search uses fzf's own
+        exact-name and "or" syntax instead."""
+        model_path = os.path.join(ROOT, "Model.js")
+        out = subprocess.run(
+            ["node", "-e",
+             'const fs=require("fs");'
+             'const src=fs.readFileSync(process.argv[1],"utf8");'
+             'eval(/function installerSearch\\(.*?\\n\\}/s.exec(src)[0]);'
+             'console.log([installerSearch(["mpv","bubblewrap"]),'
+             'installerSearch(["yt-dlp"]), installerSearch([])].join("|"))',
+             model_path],
+            capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), "^mpv$ | ^bubblewrap$|^yt-dlp$|")
+        if shutil.which("fzf"):
+            listing = "mpv\nmpv-mpris\nbubblewrap\nbubblewrap-suid\nyt-dlp\nyt-dlp-ejs\n"
+            found = subprocess.run(["fzf", "--filter", "^mpv$ | ^bubblewrap$"], input=listing,
+                                   capture_output=True, text=True).stdout.split()
+            self.assertEqual(sorted(found), ["bubblewrap", "mpv"])
+
 
 
 if __name__ == "__main__":

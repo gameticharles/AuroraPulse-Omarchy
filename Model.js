@@ -53,6 +53,7 @@ var ICON = {
   plus: String.fromCodePoint(0xF0415),         // md-plus
   remove: String.fromCodePoint(0xF09E7),       // md-delete_outline
   paste: String.fromCodePoint(0xF0192),        // md-content_paste
+  copy: String.fromCodePoint(0xF018F),         // md-content_copy
   exportFile: String.fromCodePoint(0xF021D),   // md-file_export
   importFile: String.fromCodePoint(0xF0220),   // md-file_import
   playlistTv: String.fromCodePoint(0xF0CB8),   // md-playlist_music
@@ -292,6 +293,13 @@ function byTitle(a, b) {
   var y = String(b.title || "").toLowerCase()
   if (x === y) return 0
   return x < y ? -1 : 1
+}
+
+// A search for Omarchy's package picker (Install › Package, an fzf list) that
+// shows exactly these packages: "^mpv$ | ^bubblewrap$". Plain names with
+// spaces between them match nothing there - fzf reads a space as "and".
+function installerSearch(names) {
+  return (names || []).map(function (n) { return "^" + n + "$" }).join(" | ")
 }
 
 function byArtist(a, b) {

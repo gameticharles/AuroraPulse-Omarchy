@@ -1575,38 +1575,46 @@ class Daemon:
         self.emit({"type": "health", "id": message.get("id"), "checks": checks,
                    "level": level, "summary": text, "installs": installs,
                    "updates": updates, "installing": sorted(self._installing)})
+        self._emit_health_prompt(checks)
         return None
 
-    def cmd_health_install(self, message):
-        """Open a terminal that installs (or updates) packages, then watch for
-        them to arrive and refresh Health. Only packages that a failing check
-        names can be installed; anything else in the request is ignored."""
+    def cmd_health_watch(self, message):
+        """The user is installing (or updating) packages through Omarchy:
+        optionally open the Omarchy menu at Install or Update, then watch for
+        the packages to arrive and refresh Health. AuroraPulse never runs a
+        package manager - it names what is missing and the user installs it.
+        Only packages a failing check names are watched for."""
         from . import doctor
         checks = doctor.binaries() + [c for c in (doctor.ytdlp(),
                                                   doctor.python_modules()) if c]
-        installs, updates = doctor.installable(checks)
         update = bool(message.get("update"))
-        allowed = updates if update else installs
-        wanted = [p for p in (message.get("packages") or allowed) if p in allowed]
+        wanted = doctor.wanted_packages(message.get("packages"), checks, update)
+        if message.get("open"):
+            self._open_omarchy_menu("update" if update else "install")
         if not wanted:
             self.cmd_health({})
             return None
-        argv = doctor.install_command(wanted, update=update)
-        if not argv:
-            raise SourceError("no terminal to install from; run: sudo pacman -S %s"
-                              % " ".join(wanted), "unsupported")
-        try:
-            subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError as exc:
-            raise SourceError("could not open a terminal: %s" % exc, "unsupported")
         self._installing.update(wanted)
-        self._notice("Finish in the terminal", "It asks for your password, then installs "
-                     + ", ".join(wanted) + ".")
         self.cmd_health({})
         POOL.submit(self._watch_install, list(wanted), update,
                     (doctor.ytdlp() or {}).get("detail", "") if update else "")
         return None
+
+    def _open_omarchy_menu(self, route):
+        """Open the Omarchy menu at Install or Update. Only Omarchy's own
+        menu is launched; nothing is installed from here."""
+        from . import doctor
+        route = doctor.MENU_ROUTES.get(route, "install")
+        menu = shutil.which("omarchy-menu")
+        if not menu:
+            raise SourceError("open the %s yourself" % (
+                doctor.UPDATE_HINT if route == "update" else doctor.INSTALL_HINT), "unsupported")
+        try:
+            subprocess.Popen([menu, "summon", route], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except OSError as exc:
+            raise SourceError("could not open the Omarchy menu: %s" % exc, "unsupported")
 
     def _watch_install(self, packages, update, before):
         """Refresh Health once the packages are there (or updated), or after
@@ -1625,34 +1633,48 @@ class Daemon:
         self._installing.difference_update(packages)
         self.cmd_health({})
 
+    def _light_checks(self):
+        """The quick checks behind the banner: binaries, yt-dlp and the MPRIS
+        module. No sandbox test, so it is cheap enough for every panel open."""
+        from . import doctor
+        return doctor.binaries() + [c for c in (doctor.ytdlp(),
+                                                doctor.python_modules()) if c]
+
+    def _emit_health_prompt(self, checks, first_run=False):
+        """The banner's state after a check: what is missing, or nothing -
+        which clears it. Sent after every check, so the banner stays until the
+        problem is actually fixed instead of going away after one click."""
+        from . import doctor
+        names = doctor.prompt_names(checks, first_run)
+        named = [c for c in checks if c["name"] in names]
+        installs, updates = doctor.installable(named)
+        self.emit({"type": "health_prompt", "missing": names,
+                   "required": any(c.get("required") and not c["ok"] for c in named),
+                   "installs": installs, "updates": updates, "first_run": first_run,
+                   "installing": sorted(self._installing)})
+
     def startup_health(self):
         """At launch, say if something AuroraPulse needs is missing - and the
-        first time, anything at all - with a way to Settings › Health, where
-        each one can be installed. "Not now" holds until the list changes."""
-        from . import doctor
+        first time, anything at all - with a way to install it through the
+        Omarchy menu. The banner then follows every later check."""
         try:
-            checks = doctor.binaries() + [c for c in (doctor.ytdlp(),
-                                                      doctor.python_modules()) if c]
+            checks = self._light_checks()
         except Exception:  # noqa: BLE001
             return
         health = self.store.state.setdefault("health", {})
         first_run = not health.get("seen")
         health["seen"] = int(time.time())
         self.store.save_soon()
-        names = doctor.prompt_names(checks, first_run)
-        dismissed = set(health.get("dismissed") or [])
-        if not names or set(names) <= dismissed:
-            return
-        installs, updates = doctor.installable(checks)
-        self.emit({"type": "health_prompt", "missing": names,
-                   "required": any(c.get("required") and not c["ok"] for c in checks),
-                   "installs": installs, "updates": updates, "first_run": first_run})
+        self._emit_health_prompt(checks, first_run)
 
-    def cmd_health_dismiss(self, message):
-        names = [textutil.text(n, 60) for n in message.get("names") or []][:40]
-        health = self.store.state.setdefault("health", {})
-        health["dismissed"] = sorted(set(health.get("dismissed") or []) | set(names))
-        self.store.save_soon()
+    def cmd_health_prompt(self, _m):
+        """The panel opened: is the banner still needed? A package installed
+        meanwhile - from the banner or any other way - clears it here."""
+        try:
+            checks = self._light_checks()
+        except Exception:  # noqa: BLE001
+            return None
+        self._emit_health_prompt(checks)
         return None
 
     def cmd_library_stats(self, _m):

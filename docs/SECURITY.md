@@ -238,10 +238,12 @@ must be on the device's own address. A local file is served by a one-file HTTP
 server bound to the interface that reaches the renderer, at one random
 path, answering only the renderer's address, and shut down when casting stops.
 
-**Installing dependencies** from Settings › Health opens a terminal running
-`omarchy-pkg-add` (or `sudo pacman -S --needed`) for package names taken only
-from a fixed table in `core/doctor.py`; nothing in a request can add a
-package or a word to that command, and nothing installs without your password.
+**Installing dependencies** is never done by AuroraPulse: it runs no package
+manager and asks for no privileges. Settings › Health and the start-up banner
+name what is missing (from a fixed table in `core/doctor.py`), copy the package
+names to the clipboard, and open the Omarchy menu at Install or Update
+(`omarchy-menu summon install`), where the user picks and confirms. The daemon
+then only watches for the packages to appear (`pacman -Q`) to refresh Health.
 
 **Subtitles** from YouTube are fetched by the daemon through the network
 guard and copied into the player's runtime folder, so the player never fetches

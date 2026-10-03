@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "aurora-pulse",
   "name": "Aurora Pulse",
-  "version": "1.0.5",
+  "version": "1.5.0",
   "author": "Charles Gameti",
   "license": "MIT",
   "description": "Radio, TV, YouTube, YouTube Music and local music in one bar widget: unified queue, picture-in-picture video with pinning, synced lyrics, EPG guide, 5-band EQ and crossfade.",

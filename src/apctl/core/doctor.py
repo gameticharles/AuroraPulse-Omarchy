@@ -48,7 +48,16 @@ KNOWN_PACKAGES = frozenset(PACKAGES.values())
 # yt-dlp has to keep up with YouTube, which changes something most months.
 YTDLP_STALE_DAYS = 60
 
-FIX = {name: "sudo pacman -S %s" % package for name, package in PACKAGES.items()}
+# Where Omarchy installs and updates software. AuroraPulse never runs a
+# package manager itself: it says what is missing, copies the package names,
+# and opens Omarchy's own menu, where the user picks and confirms.
+INSTALL_HINT = "Omarchy menu (Super + Space) \u203a Install \u203a Package"
+UPDATE_HINT = "Omarchy menu (Super + Space) \u203a Update \u203a Omarchy"
+# The Omarchy menu routes the Install and Update buttons open.
+MENU_ROUTES = {"install": "install", "update": "update"}
+
+FIX = {name: "install %s from the %s" % (package, INSTALL_HINT)
+       for name, package in PACKAGES.items()}
 FIX["hyprctl"] = "part of Hyprland"
 
 
@@ -108,7 +117,7 @@ def ytdlp():
     fresh = age <= YTDLP_STALE_DAYS
     check = _check("yt-dlp version", fresh,
                    "%s (%d days old)" % (version, age) if not fresh else version,
-                   False, "YouTube changes often; update it: sudo pacman -Syu yt-dlp",
+                   False, "YouTube changes often; update it from the " + UPDATE_HINT,
                    level="ok" if fresh else "warn", action="" if fresh else "update")
     if not fresh:
         check["package"] = "yt-dlp"
@@ -123,7 +132,7 @@ def python_modules():
         ok, detail = True, "media keys, playerctl and the lock screen"
     except (ImportError, ValueError) as exc:
         ok, detail = False, "media keys will not work (%s)" % str(exc)[:60]
-    return _check("PyGObject (MPRIS)", ok, detail, False, "sudo pacman -S python-gobject")
+    return _check("PyGObject (MPRIS)", ok, detail, False, FIX["PyGObject (MPRIS)"])
 
 
 def folders():
@@ -222,31 +231,13 @@ def installable(checks):
     return installs, updates
 
 
-def install_command(packages, update=False):
-    """argv that opens a terminal and installs (or updates) `packages`.
-
-    A terminal, because pacman needs your password and should show you what
-    it is about to do; nothing is installed silently. Only package names from
-    PACKAGES are accepted.
-    """
-    import shlex
-    wanted = [p for p in packages if p in KNOWN_PACKAGES and _PACKAGE_NAME.match(p)]
-    if not wanted:
-        return None
-    names = " ".join(shlex.quote(p) for p in wanted)
-    if update:
-        # Arch does not do partial upgrades: a newer yt-dlp comes with -Syu.
-        inner = "echo 'Updating %s…'; sudo pacman -Syu --needed %s" % (names, names)
-    elif shutil.which("omarchy-pkg-add"):
-        inner = "echo 'Installing %s…'; omarchy-pkg-add %s" % (names, names)
-    else:
-        inner = "echo 'Installing %s…'; sudo pacman -S --needed %s" % (names, names)
-    if shutil.which("omarchy-launch-floating-terminal-with-presentation"):
-        return ["omarchy-launch-floating-terminal-with-presentation", inner]
-    terminal = shutil.which("xdg-terminal-exec")
-    if terminal:
-        return [terminal, "bash", "-c", inner + "; read -rp 'Press Enter to close. '"]
-    return None
+def wanted_packages(packages, checks, update=False):
+    """The packages from `packages` that a failing check actually names, so a
+    request can only ever mention real, known package names."""
+    installs, updates = installable(checks)
+    allowed = updates if update else installs
+    return [p for p in (packages or allowed)
+            if p in allowed and p in KNOWN_PACKAGES and _PACKAGE_NAME.match(p)]
 
 
 def is_installed(package):

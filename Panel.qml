@@ -155,7 +155,10 @@ Panel {
   property string pipCorner: "br"
   property var scrobbleStatus: ({})
   property var health: ({})
-  property var healthPrompt: null       // {missing, installs, updates, required} at launch
+  property var healthPrompt: null       // {missing, installs, updates, required, installing}
+  // "Not now" hides the banner until the panel is next opened; it comes back
+  // while anything is still missing.
+  property bool healthBannerHidden: false
   property var audioOutputs: ({ outputs: [], bluetooth: [], chosen: "" })
   readonly property string chosenOutputKind: {
     var outs = audioOutputs.outputs || []
@@ -810,7 +813,8 @@ Panel {
       break
 
     case "health_prompt":
-      healthPrompt = msg
+      // The daemon sends this after every check; an empty list means fixed.
+      healthPrompt = (msg.missing && msg.missing.length) ? msg : null
       break
 
     case "outputs":
@@ -2127,7 +2131,7 @@ Panel {
       Rectangle {
         id: healthBanner
         Layout.fillWidth: true
-        visible: !!root.healthPrompt && !root.poweredOff
+        visible: !!root.healthPrompt && !root.poweredOff && !root.healthBannerHidden
         Layout.preferredHeight: visible ? bannerColumn.implicitHeight + Style.space(16) : 0
         radius: Style.space(6)
         readonly property bool serious: !!(root.healthPrompt && root.healthPrompt.required)
@@ -2155,11 +2159,56 @@ Panel {
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
-          Row {
+          // AuroraPulse never installs anything itself: it names the packages
+          // and opens Omarchy's own menu, where they are picked and confirmed.
+          Text {
+            width: parent.width
+            visible: healthBanner.installs.length > 0 || healthBanner.updates.length > 0
+            text: (healthBanner.installs.length
+                   ? (healthBanner.installs.length > 1
+                      ? "Install them from the Omarchy menu (Super + Space) \u203a Install \u203a Package: "
+                        + "paste the copied search, press Tab on each, then Enter."
+                      : "Install it from the Omarchy menu (Super + Space) \u203a Install \u203a Package: "
+                        + "paste the copied search, then Enter.")
+                   : "")
+                  + (healthBanner.updates.length
+                     ? (healthBanner.installs.length ? " Then update " : "Update ")
+                       + healthBanner.updates.join(", ")
+                       + " from the Omarchy menu \u203a Update \u203a Omarchy."
+                     : "")
+            color: root.panelDim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+          Text {
+            width: parent.width
+            visible: root.healthPrompt && (root.healthPrompt.installing || []).length > 0
+            text: "Waiting for " + (root.healthPrompt ? (root.healthPrompt.installing || []).join(", ") : "")
+                  + " to be installed. This goes away by itself once it is."
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+          Flow {
+            width: parent.width
             spacing: Style.space(5)
             Ui.Button {
+              visible: healthBanner.installs.length > 0
+              text: healthBanner.installs.length > 1 ? "Copy search for all" : "Copy search"
+              iconText: Model.ICON.copy
+              bordered: true
+              foreground: root.panelFg
+              accent: root.accent
+              fontSize: Style.font.caption
+              iconSize: Style.font.caption
+              verticalPadding: Style.space(3)
+              onClicked: browser.copyText(Model.installerSearch(healthBanner.installs))
+            }
+            Ui.Button {
               visible: healthBanner.installs.length > 0 || healthBanner.updates.length > 0
-              text: healthBanner.installs.length ? "Install all" : "Update"
+              text: healthBanner.installs.length ? "Open Install menu" : "Open Update menu"
               iconText: Model.ICON.download
               bordered: true
               selected: true
@@ -2169,9 +2218,8 @@ Panel {
               iconSize: Style.font.caption
               verticalPadding: Style.space(3)
               onClicked: {
-                if (healthBanner.installs.length) root.request("health_install", {})
-                if (healthBanner.updates.length) root.request("health_install", { update: true })
-                root.healthPrompt = null
+                var update = healthBanner.installs.length === 0
+                root.request("health_watch", { open: true, update: update })
               }
             }
             Ui.Button {
@@ -2186,7 +2234,6 @@ Panel {
               onClicked: {
                 root.openSettings()
                 settingsView.page = "health"
-                root.healthPrompt = null
               }
             }
             Ui.Button {
@@ -2196,10 +2243,7 @@ Panel {
               accent: root.accent
               fontSize: Style.font.caption
               verticalPadding: Style.space(3)
-              onClicked: {
-                root.request("health_dismiss", { names: root.healthPrompt.missing || [] })
-                root.healthPrompt = null
-              }
+              onClicked: root.healthBannerHidden = true
             }
           }
         }
@@ -2413,8 +2457,10 @@ Panel {
 
   onOpenedChanged: {
     if (!opened || poweredOff) return
+    healthBannerHidden = false
     if (connected) {
       request("state")
+      request("health_prompt")
       if (!items.length) loadSource()
       if (root.hasVideo) request("video_window")
     }
