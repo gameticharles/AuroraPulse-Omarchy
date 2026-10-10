@@ -553,15 +553,81 @@ def match_channel(guide, title, ident=""):
     return ""
 
 
+# A guide imported from a file (XMLTV, plain or .gz). It is consulted for
+# any channel the country guides do not know, and kept until replaced.
+MAX_GUIDE_FILE_BYTES = 256 << 20
+FILE_GUIDE = "epg-file.json"
+
+
+def import_guide_file(path, cache_dir):
+    """Read an XMLTV file into the imported guide. Returns (channels,
+    programmes) counted, so the panel can say what it got."""
+    path = os.path.realpath(os.path.expanduser(str(path or "").strip())) if path else ""
+    if not path or not os.path.isfile(path):
+        raise SourceError("that guide file does not exist", "not-found")
+    if os.path.getsize(path) > MAX_GUIDE_FILE_BYTES:
+        raise SourceError("that guide file is larger than 256 MB", "unsupported")
+    with open(path, "rb") as handle:
+        raw = handle.read(MAX_GUIDE_FILE_BYTES + 1)
+    try:
+        text = gzip.decompress(raw).decode("utf-8", "replace")
+    except (OSError, EOFError):
+        text = raw.decode("utf-8", "replace")
+    if "<programme" not in text and "<channel" not in text:
+        raise SourceError("that is not an XMLTV guide", "unsupported")
+    now = time.time()
+    # A file does not refresh itself, so it keeps a week rather than a day.
+    guide = _parse_guide(text, now - 6 * 3600, now + 8 * 86400)
+    if not guide["channels"]:
+        raise SourceError("there are no channels in that guide", "empty")
+    from ..core.state import write_json
+    if cache_dir:
+        write_json(os.path.join(cache_dir, FILE_GUIDE), guide)
+    with _GUIDE_LOCK:
+        _GUIDES["file"] = (now, guide)
+    return len(guide["channels"]), sum(len(v) for v in guide["programmes"].values())
+
+
+def file_guide(cache_dir):
+    """The imported guide, or None."""
+    with _GUIDE_LOCK:
+        hit = _GUIDES.get("file")
+    if hit:
+        return hit[1]
+    path = os.path.join(cache_dir, FILE_GUIDE) if cache_dir else ""
+    if not path or not os.path.exists(path):
+        return None
+    from ..core.state import read_json
+    guide = read_json(path, None)
+    if not isinstance(guide, dict) or guide.get("programmes") is None:
+        return None
+    with _GUIDE_LOCK:
+        _GUIDES["file"] = (os.path.getmtime(path), guide)
+    return guide
+
+
+def forget_guide_file(cache_dir):
+    with _GUIDE_LOCK:
+        _GUIDES.pop("file", None)
+    path = os.path.join(cache_dir, FILE_GUIDE) if cache_dir else ""
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
 def schedule(channel, start, end, cache_dir=None, max_age=12 * 3600, custom_url=""):
-    """Programmes for one channel item between start and end (epoch seconds)."""
+    """Programmes for one channel item between start and end (epoch seconds):
+    from its country's guide, else from an imported guide file."""
     extra = channel.get("extra") or {}
     country = extra.get("country") or channel.get("country") or ""
+    title, ident = channel.get("title", ""), extra.get("id") or channel.get("id", "")
     try:
         guide = country_guide(country, cache_dir, max_age, custom_url)
     except SourceError:
         guide = None
-    cid = match_channel(guide, channel.get("title", ""), extra.get("id") or channel.get("id", ""))
+    cid = match_channel(guide, title, ident)
+    if not cid:
+        guide = file_guide(cache_dir)
+        cid = match_channel(guide, title, ident)
     if not cid:
         return []
     return [p for p in (guide.get("programmes") or {}).get(cid, [])

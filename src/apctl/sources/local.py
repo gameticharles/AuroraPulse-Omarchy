@@ -29,7 +29,7 @@ SCAN_THREADS = 4
 # version is discarded rather than half-migrated, so a plugin upgrade never
 # leaves the library in a state where the fields mean something new but the
 # data was parsed with the old meaning.
-INDEX_VERSION = 4
+INDEX_VERSION = 5
 
 _lock = threading.Lock()
 _scan = {"running": False, "done": 0, "total": 0, "roots": []}
@@ -99,7 +99,8 @@ def _read_tags(path):
             # every track was listed under its file name.
             [resolver.FFPROBE, "-v", "error", "-show_entries",
              "format=duration:format_tags=artist,album,title,album_artist,"
-             "genre,date:stream=codec_name,codec_type,channels,sample_rate",
+             "genre,date:stream=codec_name,codec_type,channels,sample_rate:"
+             "stream_tags=artist,album,title,album_artist,genre,date",
              "-of", "json", "--", path],
             read=[path], timeout=20)
         data = json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
@@ -112,6 +113,17 @@ def _read_tags(path):
         value = tags.get(key) or tags.get(key.upper())
         if isinstance(value, str):
             out[key] = value.strip()
+    # Ogg Vorbis and Opus keep their tags on the audio stream, not the file:
+    # read only from the format, every such file was listed by its name.
+    for stream in data.get("streams") or []:
+        if stream.get("codec_type") != "audio":
+            continue
+        stags = stream.get("tags") or {}
+        for key in ("artist", "album", "title", "album_artist", "genre", "date"):
+            value = stags.get(key) or stags.get(key.upper())
+            if isinstance(value, str) and value.strip() and not out.get(key):
+                out[key] = value.strip()
+        break
     for stream in data.get("streams") or []:
         if stream.get("codec_type") == "audio":
             out["codec"] = textutil.text(stream.get("codec_name"), 32)
@@ -372,3 +384,237 @@ def folders(store, settings):
             for g in store.library.groups("folder", media="")]
 
 
+# -- a folder picked to play ------------------------------------------------
+
+# A picked folder can be anywhere, not only under the music folders, so it is
+# listed straight from the disk. Files the library already knows reuse its
+# entry; the rest are read with ffprobe, up to this many per folder, and
+# beyond that named after the file so a huge folder still opens quickly.
+FOLDER_MAX_FILES = 3000
+FOLDER_PROBE_MAX = 400
+_probed = {}
+_probed_lock = threading.Lock()
+
+
+def _natural(path):
+    """Sort key that puts "2 Song" before "10 Song"."""
+    import re
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", path)]
+
+
+def _quick(path):
+    """An entry from the file name alone, for files past the probe limit."""
+    is_video = path.lower().endswith(VIDEO_SUFFIXES)
+    folder = os.path.dirname(path)
+    return item(
+        "local", path, os.path.splitext(os.path.basename(path))[0], url=path,
+        kind="track", album=textutil.text(os.path.basename(folder), 200),
+        art={"url": "", "path": _cover(path) or ""},
+        extra={"path": path, "folder": folder, "lrc": _sidecar(path),
+               "media": "video" if is_video else "audio"})
+
+
+def folder_files(path, settings=None, limit=FOLDER_MAX_FILES):
+    """The playable files in a folder and every folder below it, in name
+    order. Hidden folders are skipped."""
+    # An empty path would resolve to the daemon's own working directory.
+    raw = str(path or "").strip()
+    root = os.path.realpath(os.path.expanduser(raw)) if raw else ""
+    if not root or root == "/" or not os.path.isdir(root):
+        raise SourceError("that folder does not exist", "not-found")
+    suffixes = extensions(settings) + VIDEO_SUFFIXES
+    follow = bool((settings or {}).get("localFollowSymlinks"))
+    found = []
+    visited = set()
+    for directory, dirs, files in os.walk(root, followlinks=follow):
+        real = os.path.realpath(directory)
+        if real in visited:
+            dirs[:] = []
+            continue
+        visited.add(real)
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in files:
+            if not name.lower().endswith(suffixes) or name.startswith("."):
+                continue
+            candidate = os.path.join(directory, name)
+            if os.path.islink(candidate) and not follow:
+                continue
+            try:
+                if not os.path.isfile(candidate) or \
+                        os.path.getsize(candidate) > MAX_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            found.append(candidate)
+            if len(found) >= limit:
+                break
+        if len(found) >= limit:
+            break
+    found.sort(key=_natural)
+    return root, found
+
+
+def folder_tracks(store, settings, path, limit=FOLDER_MAX_FILES):
+    """Everything playable in a folder, ready to play: the library's entries
+    where it has them, freshly read tags for the rest."""
+    root, paths = folder_files(path, settings, limit)
+    known = store.library.entries_under(root)
+    out = {}
+    to_probe = []
+    for candidate in paths:
+        fingerprint = _index_key(store, candidate)
+        entry = known.get(candidate)
+        if entry is not None and entry.get("f") == fingerprint:
+            out[candidate] = entry
+            continue
+        with _probed_lock:
+            cached = _probed.get(candidate)
+        if cached and cached[0] == fingerprint:
+            out[candidate] = cached[1]
+        elif len(to_probe) < FOLDER_PROBE_MAX:
+            to_probe.append((candidate, fingerprint))
+        else:
+            out[candidate] = _quick(candidate)
+
+    if to_probe:
+        try:
+            sandbox.require()
+            can_probe = True
+        except Exception:  # noqa: BLE001 - no bubblewrap: names only
+            can_probe = False
+        queue = list(to_probe)
+        lock = threading.Lock()
+
+        def worker():
+            while True:
+                with lock:
+                    if not queue:
+                        return
+                    candidate, fingerprint = queue.pop()
+                try:
+                    built = _build(candidate, store.art_dir) if can_probe \
+                        else _quick(candidate)
+                except Exception:  # noqa: BLE001
+                    built = _quick(candidate)
+                with lock:
+                    out[candidate] = built
+                if can_probe:
+                    with _probed_lock:
+                        _probed[candidate] = (fingerprint, built)
+
+        threads = [threading.Thread(target=worker, daemon=True)
+                   for _ in range(SCAN_THREADS)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        with _probed_lock:
+            while len(_probed) > 5000:
+                _probed.pop(next(iter(_probed)))
+
+    rows = []
+    for candidate in paths:
+        entry = out.get(candidate)
+        if entry:
+            rows.append({k: v for k, v in entry.items()
+                         if k not in ("f", "seen", "added")})
+    return root, rows
+
+
+
+
+# -- editing tags ------------------------------------------------------------
+
+TAG_FIELDS = ("title", "artist", "album", "album_artist", "genre", "date", "track")
+# Containers ffmpeg can embed a cover picture in. Anything else gets the
+# picture beside it as "<file name>.jpg", which is where _cover looks first.
+EMBED_ART = (".mp3", ".m4a", ".mp4", ".m4b", ".flac")
+
+
+def write_tags(store, settings, path, fields, art_path="", staging=""):
+    """Rewrite a file's tags (and optionally its cover) without re-encoding.
+
+    ffmpeg reads the file and the picture and writes the result into a
+    private staging folder: it never gets write access to the music folder.
+    The finished file then replaces the original from here, and the library
+    entry is read again. Returns the fresh entry.
+    """
+    raw = str(path or "").strip()
+    path = os.path.realpath(os.path.expanduser(raw)) if raw else ""
+    if not path or not os.path.isfile(path):
+        raise SourceError("that file no longer exists", "not-found")
+    if not path.lower().endswith(extensions(settings) + VIDEO_SUFFIXES):
+        raise SourceError("only music and video files can be tagged", "unsupported")
+    folder = os.path.dirname(path)
+    if not os.access(folder, os.W_OK) or not os.access(path, os.W_OK):
+        raise SourceError("that file's folder is read-only", "denied")
+    art = ""
+    if art_path:
+        art = os.path.realpath(os.path.expanduser(str(art_path)))
+        if not os.path.isfile(art) or not art.lower().endswith((".jpg", ".jpeg", ".png")):
+            raise SourceError("the cover has to be a JPEG or PNG picture", "unsupported")
+        if os.path.getsize(art) > 8 << 20:
+            raise SourceError("the cover picture is larger than 8 MB", "unsupported")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise SourceError("ffmpeg is needed to edit tags", "unsupported")
+    sandbox.require()
+
+    ext = os.path.splitext(path)[1].lower()
+    embed = bool(art) and ext in EMBED_ART
+    staging = staging or os.path.join(store.runtime, "tags")
+    os.makedirs(staging, mode=0o700, exist_ok=True)
+    out = os.path.join(staging, "tagged%s" % ext)
+    if os.path.exists(out):
+        os.remove(out)
+    argv = [ffmpeg, "-v", "error", "-y", "-i", path]
+    if embed:
+        argv += ["-i", art, "-map", "0:a", "-map", "1:v", "-disposition:v:0", "attached_pic",
+                 "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+        if ext == ".mp3":
+            argv += ["-id3v2_version", "3"]
+    else:
+        argv += ["-map", "0"]
+    argv += ["-c", "copy", "-map_metadata", "0"]
+    for key in TAG_FIELDS:
+        if key in (fields or {}):
+            value = textutil.text((fields or {}).get(key), 300)
+            argv += ["-metadata", "%s=%s" % (key, value)]
+    argv.append(out)
+    try:
+        proc = sandbox.run_tool(argv, read=[path] + ([art] if embed else []),
+                                write=[staging], timeout=180)
+    except subprocess.TimeoutExpired as exc:
+        raise SourceError("writing the tags took too long", "expired") from exc
+    if proc.returncode != 0 or not os.path.isfile(out) or os.path.getsize(out) == 0:
+        detail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise SourceError("could not write the tags: %s" % (detail[-1] if detail else "ffmpeg failed"),
+                          "unsupported")
+    # Copied next to the original and swapped in one rename, so a failure
+    # halfway leaves the original untouched.
+    temp = os.path.join(folder, ".%s.aurora-tags%s" % (os.path.basename(path), ext))
+    try:
+        shutil.copyfile(out, temp)
+        shutil.copymode(path, temp)
+        os.replace(temp, path)
+    finally:
+        for leftover in (temp, out):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+    if art and not embed:
+        stem = os.path.splitext(path)[0]
+        shutil.copyfile(art, stem + (".png" if art.lower().endswith(".png") else ".jpg"))
+    # The old thumbnail would otherwise win over the new cover.
+    import hashlib
+    thumb = os.path.join(store.art_dir, "local-%s.jpg"
+                         % hashlib.sha1(path.encode("utf-8", "replace")).hexdigest()[:16])
+    if os.path.exists(thumb):
+        os.remove(thumb)
+    entry = _build(path, store.art_dir)
+    fingerprint = _index_key(store, path)
+    entry["f"] = fingerprint
+    store.library.update_track(path, entry, fingerprint)
+    with _probed_lock:
+        _probed.pop(path, None)
+    return {k: v for k, v in entry.items() if k not in ("f", "seen", "added")}

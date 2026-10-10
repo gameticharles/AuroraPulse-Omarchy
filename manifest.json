@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "aurora-pulse",
   "name": "Aurora Pulse",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "Charles Gameti",
   "license": "MIT",
   "description": "Radio, TV, YouTube, YouTube Music and local music in one bar widget: unified queue, picture-in-picture video with pinning, synced lyrics, EPG guide, 5-band EQ and crossfade.",
@@ -83,6 +83,10 @@
       "sendPlaysToDirectory": true,
       "notifyTrackChange": false,
       "autoPlay": false,
+      "keepPlaying": true,
+      "podcastCheckHours": 6,
+      "podcastNotify": true,
+      "podcastAutoDownload": false,
       "radioSyncHours": 24,
       "tvSyncHours": 24,
       "tvBufferSec": 20,
@@ -390,6 +394,36 @@
         "label": "Start playing on launch",
         "defaultValue": true,
         "description": "Begin playing the last station as soon as the widget appears."
+      },
+      {
+        "key": "keepPlaying",
+        "type": "boolean",
+        "label": "Keep playing when the queue ends",
+        "defaultValue": true,
+        "description": "After the last YouTube video, song or library track, add more like it and go on."
+      },
+      {
+        "key": "podcastCheckHours",
+        "type": "integer",
+        "label": "Check podcasts for new episodes every",
+        "min": 1,
+        "max": 168,
+        "step": 1,
+        "defaultValue": 6,
+        "description": "Hours."
+      },
+      {
+        "key": "podcastNotify",
+        "type": "boolean",
+        "label": "Notify about new podcast episodes",
+        "defaultValue": true
+      },
+      {
+        "key": "podcastAutoDownload",
+        "type": "boolean",
+        "label": "Download new podcast episodes",
+        "defaultValue": false,
+        "description": "Up to three new episodes per show at each check, into Music › AuroraPulse."
       },
       {
         "key": "showBitrate",

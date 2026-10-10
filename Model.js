@@ -103,7 +103,11 @@ var ICON = {
   speaker: String.fromCodePoint(0xF04C3),      // md-speaker
   headphones: String.fromCodePoint(0xF02CB),   // md-headphones
   bluetooth: String.fromCodePoint(0xF00AF),    // md-bluetooth
-  monitor: String.fromCodePoint(0xF0379)       // md-monitor
+  monitor: String.fromCodePoint(0xF0379),      // md-monitor
+  folderOpen: String.fromCodePoint(0xF0770),   // md-folder_open
+  timer: String.fromCodePoint(0xF0150),        // md-clock_outline
+  camera: String.fromCodePoint(0xF0100),       // md-camera
+  translate: String.fromCodePoint(0xF05CA)     // md-translate
 }
 
 // The facet value meaning "only what I added" - see MINE in core/db.py.
@@ -281,6 +285,58 @@ function progress(position, total) {
 // newline or a 4 KB paste never becomes a request.
 function query(text, limit) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit || 200)
+}
+
+// A YouTube or YouTube Music link that names a playlist (a watch link with
+// `list=` counts: it was copied while the playlist played). Returns the link
+// to open, or "" for anything else, so pasting one opens the playlist rather
+// than searching for its address.
+function playlistLink(text) {
+  var t = String(text || "").trim()
+  if (!/^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(t)) return ""
+  return /[?&]list=[A-Za-z0-9_-]{10,}/.test(t) ? t.slice(0, 2048) : ""
+}
+
+// Rows that stand for a list: opened, or fetched and played whole, never
+// played as themselves.
+function isCollection(entry) {
+  if (!entry) return false
+  if (entry.kind === "playlist") return true
+  if (entry.source === "music" && entry.kind === "album") return true
+  return entry.source === "local"
+         && ["album", "artist", "genre", "folder"].indexOf(entry.kind) >= 0
+}
+
+// The channel or artist behind a YouTube or Music row, to open its page:
+// { url, name } (url is what the daemon's "channel" mode takes), or null.
+function channelOf(entry) {
+  if (!entry || (entry.source !== "youtube" && entry.source !== "music")) return null
+  if (entry.kind === "playlist" || entry.kind === "album" || entry.kind === "channel") return null
+  var x = entry.extra || {}
+  if (entry.source === "music" && x.artist_id)
+    return { url: String(x.artist_id), name: String(entry.artist || "Artist") }
+  if (x.channel_url)
+    return { url: String(x.channel_url),
+             name: String(x.channel || entry.artist || "Channel").replace(/ - Topic$/, "") }
+  return null
+}
+
+// A shuffled copy (Fisher-Yates); the list itself is left alone.
+function shuffled(list) {
+  var out = (list || []).slice()
+  for (var i = out.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1))
+    var t = out[i]
+    out[i] = out[j]
+    out[j] = t
+  }
+  return out
+}
+
+// The last part of a path, for a folder's name.
+function baseName(path) {
+  var parts = String(path || "").replace(/\/+$/, "").split("/")
+  return parts[parts.length - 1] || String(path || "")
 }
 
 function reasonText(reason, fallback) {

@@ -394,6 +394,12 @@ Item {
           onToggled: function (v) { root.settingChanged("resumePlayback", v) }
         }
         C.ToggleRow {
+          label: "Keep playing when the queue ends"
+          help: "After the last YouTube video, song or library track, more like it is added and plays on."
+          checked: root.value("keepPlaying", true)
+          onToggled: function (v) { root.settingChanged("keepPlaying", v) }
+        }
+        C.ToggleRow {
           label: "Notify when the track changes"
           help: "A desktop notification for each new track, and for what a radio station says is on."
           checked: root.value("notifyTrackChange", false)
@@ -1094,6 +1100,18 @@ Item {
             onAccepted: root.settingChanged("epgUrl", text.trim())
           }
         }
+        C.ActionRow {
+          label: "Import a guide file"
+          help: "An XMLTV file (.xml or .xml.gz) on this computer. Its programmes fill in "
+                + "the channels the automatic guides do not know, for a week."
+          action: "choose file…"
+          onRun: root.command("pickFile", { purpose: "epg" })
+        }
+        C.ActionRow {
+          label: "Forget the imported guide"
+          action: "forget"
+          onRun: root.command("epg_import", { action: "forget" })
+        }
 
         C.SectionHeader { title: "Playlists" }
         C.InfoRow {
@@ -1281,6 +1299,34 @@ Item {
         Layout.fillWidth: true
         visible: root.page === "podcasts"
         spacing: 2
+
+        C.SectionHeader {
+          title: "New episodes"
+        }
+        C.SliderRow {
+          label: "Check for new episodes every"
+          from: 1; to: 48; stepSize: 1
+          value: root.value("podcastCheckHours", 6)
+          format: function (v) { return v + (v === 1 ? " hour" : " hours") }
+          onMoved: function (v) { root.settingChanged("podcastCheckHours", v) }
+        }
+        C.ToggleRow {
+          label: "Notify about new episodes"
+          checked: root.value("podcastNotify", true)
+          onToggled: function (v) { root.settingChanged("podcastNotify", v) }
+        }
+        C.ToggleRow {
+          label: "Download new episodes"
+          help: "Up to three new episodes of each show at every check, into Music › AuroraPulse, "
+                + "so they play offline."
+          checked: root.value("podcastAutoDownload", false)
+          onToggled: function (v) { root.settingChanged("podcastAutoDownload", v) }
+        }
+        C.ActionRow {
+          label: "Check now"
+          action: "check"
+          onRun: root.command("podcast", { action: "check" })
+        }
 
         C.SectionHeader {
           title: "Subscriptions"

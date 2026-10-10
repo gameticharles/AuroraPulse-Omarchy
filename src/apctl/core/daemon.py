@@ -37,6 +37,7 @@ from . import protocol, repair, resolver
 from .artwork import Artwork
 from .custom import Custom, downloads_dir, export_rows, parse_import, read_source
 from .db import Catalogue
+from .extras import Extras
 from .player import Mpv, VIDEO_APP_ID
 from .sync import Syncer
 from .protocol import CAPABILITIES, PROTOCOL_VERSION
@@ -103,7 +104,8 @@ CONTROL_COMMANDS = frozenset((
     "favorite", "saved", "forget", "raise",
     # Order matters for these - "add to playlist" then "move it up", "set the
     # alarm" then "try it" - and the pool would run them side by side.
-    "playlist", "alarm", "subtitle", "quality",
+    "playlist", "alarm", "subtitle", "quality", "audio_track", "lyrics_offset",
+    "recent_folders",
 ))
 
 # Commands that start, change or end playback. One thread, newest wins: a
@@ -182,6 +184,11 @@ START_TIMEOUT_VIDEO = 25.0
 # so a "play all" on a 2,000-track library does not become a 2 MB event.
 MAX_QUEUE = 500
 
+# Rows that stand for a list (a folder, a playlist, an album, a show, a
+# genre...) rather than something mpv can play.
+COLLECTION_KINDS = ("genre", "group", "country", "folder", "notice", "playlist",
+                    "album", "artist", "podcast")
+
 
 class _Lane:
     """One worker thread that runs jobs strictly in arrival order."""
@@ -209,7 +216,7 @@ class _Lane:
                 pass
 
 
-class Daemon:
+class Daemon(Extras):
     def __init__(self, store=None, emit=None):
         self.store = store or Store(
             os.environ.get("AP_DATA_DIR",
@@ -532,7 +539,13 @@ class Daemon:
                         art=base.art_for(show.get("art") or "", "pod-%s" % show["show"],
                                          base._fetcher()))
             offset = message.get("offset") or 0
-            results = episodes[offset:offset + limit]
+            # Played and new marks; opening the show catches it up.
+            results = self._decorate_episodes(episodes[offset:offset + limit], feed_url)
+            if not offset:
+                self._show_opened(feed_url, episodes)
+                counts = self._new_counts()
+                if counts.pop(feed_url, None) is not None:
+                    self.store.library.set_json("podcastNew", counts)
             if ident is not None:
                 self.emit({"type": "list", "id": ident, "source": source,
                            "mode": mode, "items": results, "offset": offset,
@@ -559,8 +572,10 @@ class Daemon:
 
     def _more_after(self, source, message, offset, results, limit):
         """Whether a list with no known total has another page."""
-        if source == "music":
-            entry = music._PAGES.get(textutil.text(message.get("query"), 200).lower())
+        mode = message.get("mode") or "search"
+        if source == "music" and mode in ("search", "playlists", "albums"):
+            kind = "songs" if mode == "search" else mode
+            entry = music._PAGES.get(music.page_key(message.get("query"), kind))
             if entry is not None:
                 return bool(entry["token"]) or len(entry["items"]) > offset + len(results)
         if source == "youtube":
@@ -701,19 +716,38 @@ class Daemon:
             if mode == "search":
                 return youtube.search(query, limit, cache_dir, budget,
                                       offset=message.get("offset") or 0)
+            if mode == "playlists":
+                return youtube.search_playlists(query, limit,
+                                                offset=message.get("offset") or 0)
             if mode == "playlist":
-                return youtube.playlist(query, limit, cache_dir, budget)
+                # Every video at once: a playlist is played or queued whole.
+                offset = message.get("offset") or 0
+                return youtube.playlist(query, cache_dir, 500,
+                                        budget)[offset:offset + limit]
             if mode == "channel":
                 return youtube.channel_feed(query, cache_dir, limit, budget)
         elif source == "music":
             if mode == "search":
                 return music.search(query, limit, cache_dir, budget,
                                     offset=message.get("offset") or 0)
+            if mode in ("playlists", "albums"):
+                return music.search_collections(query, mode, limit,
+                                                offset=message.get("offset") or 0)
             if mode == "playlist":
-                return music.playlist(query, cache_dir, limit, budget)
+                offset = message.get("offset") or 0
+                return music.playlist(query, cache_dir, 500,
+                                      budget)[offset:offset + limit]
             if mode == "channel":
                 return music.channel(query, cache_dir, limit, budget)
         elif source == "local":
+            if mode == "dir":
+                # A folder picked to play, anywhere on disk.
+                offset = message.get("offset") or 0
+                root, rows = local.folder_tracks(self.store, settings,
+                                                 message.get("folder") or "")
+                if not offset:
+                    self._remember_folder(root)
+                return rows[offset:offset + limit]
             if mode in ("search", "browse"):
                 offset = message.get("offset") or 0
                 return local.tracks(self.store, settings, message.get("folder") or "",
@@ -745,6 +779,9 @@ class Daemon:
                 mine = [podcast.show_item(p["feed"], p.get("title"), p.get("author"),
                                           p.get("art"))
                         for p in self.custom.data()["podcasts"]]
+                fresh = self._new_counts()
+                for show_row in mine:
+                    show_row["extra"]["new"] = int(fresh.get(show_row["extra"]["feed"]) or 0)
                 if mine or (message.get("offset") or 0):
                     return mine[(message.get("offset") or 0):][:limit]
                 # Nothing subscribed yet: the directory's top shows, so the tab
@@ -798,11 +835,11 @@ class Daemon:
         return None
 
     def cmd_lyrics(self, message):
-        item = self._current or message.get("item") or {}
-        found = music.lyrics_for(item, self.settings())
-        self._last_lyrics = (item.get("uid", ""), found or None)
-        self.emit({"type": "lyrics", "uid": item.get("uid", ""),
-                   "lyrics": found or None})
+        item = message.get("item") or self._current or {}
+        # Lyrics you added win over every provider.
+        found = self._own_lyrics(item.get("uid", "")) or \
+            music.lyrics_for(item, self.settings())
+        self._emit_lyrics(item, found)
         return None
 
     @staticmethod
@@ -987,13 +1024,21 @@ class Daemon:
         result = None
         try:
             if action == "create":
+                if message.get("fromQueue") and not self.queue:
+                    raise SourceError("the queue is empty", "empty")
                 made = library.create_playlist(message.get("name"))
-                items = [protocol.clean_item(i) for i in message.get("items") or []
+                source_items = list(self.queue) if message.get("fromQueue") \
+                    else (message.get("items") or [])
+                items = [protocol.clean_item(i) for i in source_items
                          if isinstance(i, dict)]
                 if items:
                     library.add_to_playlist(made["id"], [self._keepable(i) for i in items if i])
                 self._notice("Made the playlist %s" % made["name"])
                 result = made
+            elif action == "export":
+                return self._playlist_export(ident)
+            elif action == "import":
+                result = self._playlist_import(message.get("path"))
             elif action == "rename":
                 if not library.rename_playlist(ident, message.get("name")):
                     raise SourceError("that playlist no longer exists", "not-found")
@@ -1901,8 +1946,7 @@ class Daemon:
         items = message.get("items") or ([message["item"]] if "item" in message
                                          else [])
         clean = [protocol.clean_item(i) for i in items if isinstance(i, dict)]
-        clean = [c for c in clean if c and c.get("kind") not in
-                 ("genre", "group", "country", "folder", "notice")]
+        clean = [c for c in clean if c and c.get("kind") not in COLLECTION_KINDS]
         if not clean:
             raise SourceError("there was nothing playable in that", "empty")
         start = textutil.int_in(message.get("start"), 0, len(clean) - 1, 0)
@@ -1921,22 +1965,40 @@ class Daemon:
     def cmd_enqueue(self, message):
         items = message.get("items") or ([message["item"]] if "item" in message
                                          else [])
+        # A folder, playlist or album row is opened, never queued as itself:
+        # the panel fetches what is in it and sends that.
         clean = [c for c in (protocol.clean_item(i) for i in items
-                             if isinstance(i, dict)) if c]
+                             if isinstance(i, dict))
+                 if c and c.get("kind") not in COLLECTION_KINDS]
         if not clean:
             raise SourceError("there was nothing to add", "empty")
         unique = bool(self._on("preventDuplicates", True))
-        known = {entry.get("uid") for entry in self.queue}
-        for entry in clean:
-            if not unique or entry["uid"] not in known:
-                self.queue.append(entry)
-                known.add(entry["uid"])
+        if textutil.bool_of(message.get("next"), False) and self.queue:
+            # Play next: right after what is playing, in the order given. An
+            # entry already waiting further down moves up rather than doubling.
+            wanted = {entry["uid"] for entry in clean}
+            current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+            if unique:
+                kept = [e for e in self.queue
+                        if e is current or e.get("uid") not in wanted]
+                self.index = kept.index(current) if current in kept else 0
+                self.queue = kept
+            self.queue[self.index + 1:self.index + 1] = clean
+        else:
+            known = {entry.get("uid") for entry in self.queue}
+            for entry in clean:
+                if not unique or entry["uid"] not in known:
+                    self.queue.append(entry)
+                    known.add(entry["uid"])
         del self.queue[MAX_QUEUE:]
         self._emit_queue()
         self.emit_state()
+        label = textutil.text(message.get("label"), 120)
         self.emit({"type": "notice", "level": "info",
-                   "title": "Added to the queue",
-                   "body": textutil.text(clean[0].get("title"), 120)})
+                   "title": "Plays next" if message.get("next") else "Added to the queue",
+                   "body": textutil.text(clean[0].get("title"), 120) if len(clean) == 1
+                   else "%d from %s" % (len(clean), label) if label
+                   else "%d items" % len(clean)})
         return {"queue": len(self.queue)}
 
     def cmd_remove(self, message):
@@ -2023,6 +2085,8 @@ class Daemon:
             self._advance(gen=message.get("_gen"))
             return None
         target = self._step(True)
+        if target is None and self._keep_playing(gen=message.get("_gen")):
+            return None
         if target is None:
             # The end of the list. Release the player rather than leaving an
             # idle sandbox and an item that claims to be current.
@@ -3894,6 +3958,8 @@ class Daemon:
                 if self._session_video:
                     POOL.submit(self._apply_subtitles)
                     POOL.submit(self._apply_quality)
+                # Languages to choose from, once the demuxer has listed them.
+                POOL.submit(lambda: (time.sleep(0.6), self._emit_audio_tracks()))
                 current = self._current or {}
                 if current.get("uid") and current.get("uid") != getattr(self, "_last_played", None):
                     self._last_played = current.get("uid")
@@ -3994,6 +4060,7 @@ class Daemon:
                     return
             self._playback_failed("the stream ended")
             return
+        self._mark_episode_played(current)
         self.handle({"cmd": "auto_next"})
 
     def _playback_failed(self, detail):
@@ -4071,6 +4138,9 @@ DEFAULT_SETTINGS = {
     "useYtLyrics": True, "lyricsProviders": "lrclib,azlyrics,sidecar",
     "scanRoots": "", "requestTimeoutSec": 20, "offlineMode": False,
     "notifyTrackChange": False,
+    # 1.6: more like the last track when the queue runs out; podcast checks.
+    "keepPlaying": True, "podcastCheckHours": 6, "podcastNotify": True,
+    "podcastAutoDownload": False,
     "normalizeVolume": False, "eqBands": "0,0,0,0,0", "sleepFadeSec": 30,
     "alarmEnabled": False, "alarmTime": "07:00", "alarmDays": "1,2,3,4,5,6,7",
     "alarmFadeSec": 60, "alarmVolume": 50,
@@ -4099,7 +4169,7 @@ SPEC = {
     "ytSearchResults": (5, 50), "requestTimeoutSec": (5, 120),
     "volume": (0, 100), "autoSyncHours": (1, 720),
     "sleepFadeSec": (0, 120), "alarmFadeSec": (0, 600), "alarmVolume": (5, 100),
-    "subtitleSize": (0.5, 3.0),
+    "subtitleSize": (0.5, 3.0), "podcastCheckHours": (1, 168),
 }
 
 
@@ -4167,6 +4237,8 @@ def main(argv=None):
         threading.Thread(target=daemon.sink_watch_loop, name="ap-sink",
                          daemon=True).start()
         threading.Thread(target=daemon.alarm_loop, name="ap-alarm",
+                         daemon=True).start()
+        threading.Thread(target=daemon.podcast_loop, name="ap-podcasts",
                          daemon=True).start()
         daemon._playback.submit(daemon.restore_queue)
         POOL.submit(daemon.resume_downloads)

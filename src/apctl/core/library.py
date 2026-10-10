@@ -102,7 +102,12 @@ SMART = (
     ("smart:recent", "Recently played"),
     ("smart:added", "Recently added"),
     ("smart:favorites", "Favourites"),
+    ("smart:long", "Long tracks"),
 )
+
+# "Long tracks": anything of at least this many seconds, from the library and
+# from what has been played (mixes, sets, talks and audiobook chapters).
+LONG_TRACK_SECONDS = 600
 
 PLAYLIST_LIMIT = 5000
 NAME_LIMIT = 80
@@ -219,6 +224,19 @@ class Library:
     def set_meta(self, key, value):
         self._write(lambda c: c.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, str(value))))
+
+    def get_json(self, key, default=None):
+        """A meta value stored as JSON (recent folders, podcast marks...)."""
+        raw = self.get_meta(key)
+        if raw is None:
+            return default
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def set_json(self, key, value):
+        self.set_meta(key, json.dumps(value, separators=(",", ":"), ensure_ascii=True))
 
     # -- migration from state.json ----------------------------------------
 
@@ -452,10 +470,33 @@ class Library:
         elif ident == "smart:favorites":
             rows = self._rows("SELECT entry FROM favorite ORDER BY added DESC LIMIT ?",
                               (limit,))
+        elif ident == "smart:long":
+            return self._long_tracks(limit)
         else:
             rows = self._rows("SELECT entry FROM playlist_item WHERE playlist = ? "
                               "ORDER BY pos LIMIT ?", (ident, limit))
         return [e for e in (_load(r[0]) for r in rows) if e]
+
+    def _long_tracks(self, limit):
+        """Played items and library files of LONG_TRACK_SECONDS or more, the
+        most played first, live streams left out (they have no length)."""
+        out, seen = [], set()
+        for sql in ("SELECT entry FROM play ORDER BY count DESC, last DESC",
+                    "SELECT entry FROM track ORDER BY lower(title)"):
+            for row in self._rows(sql):
+                entry = _load(row[0])
+                if not entry or entry.get("uid") in seen or entry.get("is_live"):
+                    continue
+                try:
+                    seconds = int(entry.get("duration") or 0)
+                except (TypeError, ValueError):
+                    seconds = 0
+                if seconds >= LONG_TRACK_SECONDS:
+                    seen.add(entry.get("uid"))
+                    out.append(entry)
+                    if len(out) >= limit:
+                        return out
+        return out
 
     def _exists(self, conn, ident):
         return conn.execute("SELECT 1 FROM playlist WHERE id = ?", (ident,)).fetchone()
@@ -530,6 +571,21 @@ class Library:
                 "scanned_at": int(self.get_meta("scanned_at", 0) or 0),
                 "roots": roots}
 
+    def entries_under(self, folder):
+        """{path: entry} for the indexed files anywhere below `folder`, each
+        with its fingerprint, so a folder picked to play reuses what a scan
+        already read."""
+        prefix = folder.rstrip("/") + "/"
+        out = {}
+        for path, f, raw in self._rows(
+                "SELECT path, f, entry FROM track WHERE substr(path, 1, ?) = ?",
+                (len(prefix), prefix)):
+            entry = _load(raw)
+            if entry:
+                entry["f"] = f
+                out[path] = entry
+        return out
+
     def index(self):
         """{path: entry} with each entry's fingerprint and times, for a scan."""
         out = {}
@@ -573,6 +629,21 @@ class Library:
                                ("scanned_at", str(now))):
                 conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
         self._write(run)
+
+    def update_track(self, path, entry, fingerprint):
+        """Replace one file's entry after its tags were edited, keeping when it
+        was added. Returns False when the file is not in the index."""
+        cols = _track_columns(entry)
+        clean = {k: v for k, v in entry.items() if k not in ("f", "seen", "added")}
+
+        def run(conn):
+            return conn.execute(
+                "UPDATE track SET uid = ?, f = ?, seen = ?, media = ?, title = ?, "
+                "artist = ?, album = ?, genre = ?, folder = ?, entry = ? WHERE path = ?",
+                (cols["uid"], str(fingerprint or ""), int(time.time()), cols["media"],
+                 cols["title"], cols["artist"], cols["album"], cols["genre"],
+                 cols["folder"], _dump(clean), path)).rowcount
+        return self._write(run) > 0
 
     def clear_index(self):
         self._write(lambda c: c.execute("DELETE FROM track"))

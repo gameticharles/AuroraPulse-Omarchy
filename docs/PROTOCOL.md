@@ -235,6 +235,13 @@ omarchy-shell aurora-pulse powerOn
 omarchy-shell aurora-pulse status        # "off", "idle" or "<mode>: <title>"
 omarchy-shell aurora-pulse play "groove salad"   # first match in the open tab
 omarchy-shell aurora-pulse tab queue     # radio, tv, youtube, music, local, queue, saved
+omarchy-shell aurora-pulse tab music:albums      # youtube:playlists, music:playlists, music:songs, local:albums ...
+omarchy-shell aurora-pulse folder ~/Music/Blue   # play a folder and what is below it
+omarchy-shell aurora-pulse openFolder ~/Music    # list it without playing
+omarchy-shell aurora-pulse pickFolder            # the desktop folder chooser, then play
+omarchy-shell aurora-pulse searchAll "jazz"      # every source at once
+omarchy-shell aurora-pulse radio                 # more like what is playing
+omarchy-shell aurora-pulse screenshot            # the video frame, to Pictures › AuroraPulse
 omarchy-shell aurora-pulse search "jazz"
 omarchy-shell aurora-pulse settings radio
 omarchy-shell aurora-pulse view grid
@@ -330,6 +337,18 @@ finishes is served from the network and is still correct.
 | `forget` | `uid` (empty clears all) | remove from the history |
 | `sleep` | `minutes` (0 cancels) | stop playing later; `sleepAt` in `state` |
 | `custom` | `op`, `kind`, `fields`, `itemId` | your own stations, channels and playlists |
+| `enqueue` | `item` or `items[]`, `label?`, `next?` | add to the queue (`next`: right after what is playing); the notice names the `label` when several are added |
+| `radio` | `item?` (what is playing) | play it with more like it queued after: YouTube's mix, or the library's same artist, then genre |
+| `playlist` | `action`: … · `create` + `fromQueue` · `export` (to Downloads, M3U) · `import` + `path` | as before, plus the queue saved and M3U files |
+| `recent_folders` | `action`: `list` · `remove` + `path` · `clear` | emits `recent_folders` with `folders[]` (`path`, `name`, `exists`) |
+| `audio_track` | `action`: `list` · `select` + `key` | emits `audiotracks` (`choices[]`, `selected`), only when there are several |
+| `screenshot` | — | saves the video frame to Pictures › AuroraPulse; emits `exported` |
+| `epg_import` | `path` · or `action: "forget"` | read an XMLTV file into the guide used for channels the country guides miss |
+| `lyrics_set` | `text` ("" forgets), `item?` | your own lyrics: timed when lines carry [mm:ss.xx]; emits `lyrics` (`source: "yours"`) |
+| `lyrics_offset` | `offset` (ms, ±30000), `item?` | show synced lines later (positive) or earlier; kept per track |
+| `tags` | `path`, `fields` (`title`, `artist`, `album`, `album_artist`, `genre`, `date`, `track`), `art?` | rewrite a local file's tags (and cover) without re-encoding; emits `tagged` |
+| `podcast` | `action`: `mark` + `uid`/`uids[]`, `played` · `check` | played marks; check the subscriptions now |
+| `search_all` | `query`, `limit?`, `sources[]?` | emits one `search_all` (`source`, `items[]`, `error?`) per source as it answers, then one with `done` |
 | `stations_import` / `stations_export` | `text`/`source` / `format`,`mine` | import or export stations |
 
 `state` also carries `favorite`. The `queue` event lists each entry with its
@@ -348,6 +367,9 @@ to the running player as an mpv `lavfi` filter chain without restarting it.
 | cmd | Fields | Effect |
 |---|---|---|
 | `source` (podcast) | `mode`: `browse` (subscriptions, or the top shows) · `search` · `episodes` + `feed` | the list reply for `episodes` also carries `show` |
+| `source` (youtube) | `mode`: `search` · `playlists` (playlist search) · `playlist` + `query` (an id or any link with `list=`) · `channel` | `playlists` rows have `kind: "playlist"` and `extra.playlist_id`; a `playlist` is listed whole (up to 500) |
+| `source` (music) | `mode`: `search` (songs) · `playlists` · `albums` · `playlist` + `query` · `channel` | `albums` rows have `kind: "album"`; playlists are YouTube Music's own, else community ones |
+| `source` (local) | `mode`: `browse`/`search` · `albums`/`artists`/`genres`/`folders` · `dir` + `folder` | `dir` lists any folder and those below it in name order, reusing the library's entries |
 | `custom` (podcast) | `op`: `add`/`remove`, `fields.feed` | subscribe or unsubscribe |
 | `download` | `item?`, `kind`: `audio`/`video` | queue a yt-dlp download into Music/Videos › AuroraPulse |
 | `download_cancel` / `downloads` | `jobId` / — | cancel or remove a job; emits `downloads` with `jobs[]` |

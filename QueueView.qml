@@ -26,6 +26,7 @@ Item {
   signal remove(int index)
   signal move(int from, int to)
   signal clear()
+  signal save()
 
   readonly property int totalSeconds: {
     var sum = 0
@@ -61,6 +62,25 @@ Item {
     }
 
     Ui.Button {
+      id: saveQueue
+      anchors.right: clearQueue.visible ? clearQueue.left : parent.right
+      anchors.rightMargin: clearQueue.visible ? Style.space(4) : 0
+      anchors.verticalCenter: parent.verticalCenter
+      visible: root.items.length > 0
+      text: "Save"
+      iconText: Model.ICON.save
+      tooltipText: "Keep the queue as one of your playlists"
+      bordered: true
+      foreground: root.fg
+      accent: root.accent
+      fontSize: Style.font.caption
+      iconSize: Style.font.caption
+      verticalPadding: Style.space(2)
+      onClicked: root.save()
+    }
+
+    Ui.Button {
+      id: clearQueue
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       visible: root.items.length > 1

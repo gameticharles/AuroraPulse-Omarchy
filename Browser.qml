@@ -69,6 +69,53 @@ Item {
   // Podcasts: the show whose episodes are listed (mode "episodes"), or null.
   property var show: null
   readonly property bool showOpen: source === "podcast" && mode === "episodes" && !!show
+  // YouTube and Music: what a search looks for, "" | "playlists" | "albums".
+  property string webKind: ""
+  // The open playlist, album, picked folder or library group, or null:
+  // { source, kind, title, artist, url, path, count, art }.
+  property var collection: null
+  readonly property bool collectionOpen: browsing && !!collection && !showOpen
+  // A playlist, album or picked folder replaces the search row; a library
+  // group keeps it, to filter inside the group.
+  readonly property bool collectionWhole: collectionOpen
+                                          && (mode === "playlist" || mode === "dir")
+  signal webKindChosen(string kind)
+  signal collectionBack()
+  // how: "play" | "shuffle" | "queue"
+  signal collectionAct(string how)
+  signal collectionSave()
+  signal actOnRow(var entry, string how)
+  signal pickFolder()
+  // Folders played before: [{ path, name, exists }], newest first.
+  property var recentFolders: []
+  signal openRecentFolder(string path)
+  signal forgetRecentFolder(string path)       // "" clears them all
+  signal wantRecentFolders()
+  signal enqueueNext(var entry)
+  signal startRadio(var entry)
+  signal openChannel(var entry)
+  signal saveTags(string path, var fields, string art)
+  signal pickArt()
+  signal markPlayed(var entry, bool played)
+  signal queueSave()
+  // One search across every source (view "all").
+  property var allResults: ({})
+  property string allQuery: ""
+  property bool allSearching: false
+  signal searchAll(string text)
+  signal showAllIn(string source, string text)
+  // TV: the channel number being typed.
+  property string dialText: ""
+
+  // The tag editor's cover, from the file chooser.
+  function artPicked(path) { tagEditor.art = path }
+
+  // A playlist, album, folder or group row plays whole; anything else plays
+  // with the list around it.
+  function playRow(entry, index) {
+    if (Model.isCollection(entry)) root.actOnRow(entry, "play")
+    else root.play(entry, index)
+  }
 
   property color fg: Color.popups.text
   property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
@@ -105,9 +152,11 @@ Item {
   property string localDrill: ""
   signal localMediaChosen(string media)
   readonly property var facetChips: {
+    // The open group's header has the way back, so no back chip here.
     if (source === "local")
-      return (localDrill ? ["__back__"] : []).concat(
-        ["", "audio", "video", "albums", "artists", "genres", "folders"])
+      return ["", "audio", "video", "albums", "artists", "genres", "folders"]
+    if (source === "youtube") return mode === "playlist" ? [] : ["", "playlists"]
+    if (source === "music") return mode === "playlist" ? [] : ["", "playlists", "albums"]
     if (!mirroredSource || (!genres.length && customCount === 0)) return []
     var out = [""]
     if (customCount > 0) out.push(Model.MINE)
@@ -324,6 +373,22 @@ Item {
       }
 
       Ui.Button {
+        readonly property bool active: root.view === "all"
+        iconText: Model.ICON.search
+        tooltipText: "Search everything"
+        bordered: active
+        foreground: active ? root.accent : root.dim
+        background: active ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.14) : "transparent"
+        accent: root.accent
+        fontFamily: root.fontFamily
+        iconSize: Style.font.body
+        verticalPadding: Style.space(4)
+        onClicked: {
+          root.selectView(active ? "browse" : "all")
+          if (!active) Qt.callLater(allView.focusSearch)
+        }
+      }
+      Ui.Button {
         readonly property bool active: root.view === "queue"
         text: root.queueItems.length > 0 ? String(root.queueItems.length) : ""
         iconText: Model.ICON.queue
@@ -360,13 +425,13 @@ Item {
       Layout.fillWidth: true
       Layout.fillHeight: false
       Layout.preferredHeight: searchField.implicitHeight
-      visible: root.browsing && !root.showOpen
+      visible: root.browsing && !root.showOpen && !root.collectionWhole
 
       Ui.TextField {
         id: searchField
         objectName: "auroraSearch"
         anchors.left: parent.left
-        anchors.right: root.showCountry ? countryPicker.left : guideToggle.left
+        anchors.right: root.showCountry ? countryPicker.left : folderButton.left
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: parent.verticalCenter
         foreground: root.fg
@@ -379,8 +444,11 @@ Item {
           root.source === "local" ? "Filter your library"
           : root.source === "radio" ? "Search stations, genres, cities"
           : root.source === "tv" ? "Search channels"
-          : root.source === "music" ? "Search songs and artists, then Enter"
+          : root.source === "music" ? (root.webKind === "albums" ? "Search albums, then Enter"
+                                       : root.webKind === "playlists" ? "Search playlists, or paste a link"
+                                       : "Search songs and artists, then Enter")
           : root.source === "podcast" ? "Search podcasts"
+          : root.webKind === "playlists" ? "Search playlists, or paste a link"
           : "Search YouTube, then Enter")
         Component.onCompleted: text = root.searchText
         onTextChanged: if (text !== root.searchText) root.searchEdited(text)
@@ -440,6 +508,53 @@ Item {
         accent: root.accent
         fontFamily: root.fontFamily
         onChanged: function (value) { root.countryChosen(value) }
+      }
+
+      // Local: play a folder from anywhere on disk, picked in the desktop's
+      // own folder chooser.
+      Ui.Button {
+        id: folderButton
+        visible: root.source === "local"
+        width: visible ? implicitWidth : 0
+        anchors.right: guideToggle.left
+        anchors.rightMargin: visible ? Style.space(2) : 0
+        anchors.verticalCenter: parent.verticalCenter
+        iconText: Model.ICON.folderOpen
+        tooltipText: "Play a folder…"
+        foreground: root.dim
+        accent: root.accent
+        iconSize: Style.font.body
+        onClicked: {
+          root.wantRecentFolders()
+          folderMenu.popup()
+        }
+        // The chooser, then the folders played before, newest first.
+        Menu {
+          id: folderMenu
+          MenuItem {
+            text: "Choose a folder…"
+            onTriggered: root.pickFolder()
+          }
+          MenuSeparator { visible: root.recentFolders.length > 0 }
+          Instantiator {
+            model: root.recentFolders
+            delegate: MenuItem {
+              required property var modelData
+              text: modelData.name + (modelData.exists ? "" : "  (missing)")
+              enabled: !!modelData.exists
+              onTriggered: root.openRecentFolder(modelData.path)
+            }
+            onObjectAdded: function (index, object) { folderMenu.insertItem(index + 2, object) }
+            onObjectRemoved: function (index, object) { folderMenu.removeItem(object) }
+          }
+          MenuSeparator { visible: root.recentFolders.length > 0 }
+          MenuItem {
+            visible: root.recentFolders.length > 0
+            height: visible ? implicitHeight : 0
+            text: "Clear the recent folders"
+            onTriggered: root.forgetRecentFolder("")
+          }
+        }
       }
 
       Ui.Button {
@@ -547,6 +662,145 @@ Item {
       }
     }
 
+    // ---- an open playlist, album, folder or library group -----------------
+
+    Item {
+      id: collectionHeader
+      Layout.fillWidth: true
+      Layout.fillHeight: false
+      Layout.preferredHeight: visible ? Style.space(88) : 0
+      visible: root.collectionOpen
+      readonly property var c: root.collection || ({})
+      readonly property bool remote: c.source === "youtube" || c.source === "music"
+      readonly property int size: root.mode === "playlist" || root.mode === "dir"
+                                  ? root.items.length : (root.total >= 0 ? root.total : root.items.length)
+      readonly property string noun: c.source === "youtube" ? "video"
+                                     : c.source === "music" ? "song" : "track"
+
+      Ui.Button {
+        id: collectionBackButton
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.topMargin: Style.space(9)
+        iconText: Model.ICON.back
+        tooltipText: "Back"
+        foreground: root.dim
+        accent: root.accent
+        iconSize: Style.font.body
+        onClicked: root.collectionBack()
+      }
+      ArtTile {
+        id: collectionArt
+        anchors.left: collectionBackButton.right
+        anchors.leftMargin: Style.space(6)
+        anchors.top: parent.top
+        width: Style.space(46)
+        height: Style.space(46)
+        radius: Style.space(6)
+        item: root.artItem({ uid: "collection:" + (collectionHeader.c.url || collectionHeader.c.path
+                                                   || collectionHeader.c.title || ""),
+                             source: collectionHeader.c.source || root.source,
+                             title: collectionHeader.c.title || "",
+                             art: collectionHeader.c.art || {} })
+      }
+      Column {
+        anchors.left: collectionArt.right
+        anchors.leftMargin: Style.space(10)
+        anchors.right: parent.right
+        anchors.verticalCenter: collectionArt.verticalCenter
+        spacing: Style.space(2)
+        Text {
+          width: parent.width
+          text: collectionHeader.c.title || ""
+          color: root.fg
+          font.pixelSize: Style.font.body
+          font.bold: true
+          elide: Text.ElideRight
+        }
+        Text {
+          width: parent.width
+          text: {
+            var c = collectionHeader.c
+            var parts = []
+            if (collectionHeader.remote)
+              parts.push(c.kind === "channel" ? (c.source === "music" ? "Artist" : "Channel")
+                         : c.label && c.label !== "Playlist" ? c.label
+                         : c.kind === "album" ? "Album" : "Playlist")
+            else if (c.kind === "dir" || c.kind === "folder") parts.push("Folder")
+            if (c.artist && c.kind !== "dir") parts.push(c.artist)
+            if (collectionHeader.size > 0 || !root.loading)
+              parts.push(Model.count(collectionHeader.size, collectionHeader.noun,
+                                     collectionHeader.noun + "s"))
+            if ((c.kind === "dir" || c.kind === "folder") && c.path) parts.push(c.path)
+            return parts.filter(function (x) { return !!x }).join("  ·  ")
+          }
+          color: root.dim
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideMiddle
+        }
+      }
+
+      Row {
+        anchors.left: collectionArt.left
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(4)
+        spacing: Style.space(6)
+        readonly property bool ready: root.items.length > 0 && !(root.loading && root.items.length === 0)
+
+        Ui.Button {
+          text: "Play all"
+          iconText: Model.ICON.play
+          bordered: true
+          enabled: parent.ready
+          foreground: root.accent
+          accent: root.accent
+          fontSize: Style.font.caption
+          iconSize: Style.font.caption
+          verticalPadding: Style.space(3)
+          horizontalPadding: Style.space(10)
+          onClicked: root.collectionAct("play")
+        }
+        Ui.Button {
+          text: "Shuffle"
+          iconText: Model.ICON.shuffle
+          bordered: true
+          enabled: parent.ready
+          foreground: root.fg
+          accent: root.accent
+          fontSize: Style.font.caption
+          iconSize: Style.font.caption
+          verticalPadding: Style.space(3)
+          horizontalPadding: Style.space(10)
+          onClicked: root.collectionAct("shuffle")
+        }
+        Ui.Button {
+          iconText: Model.ICON.playlist
+          tooltipText: "Add all to the queue"
+          bordered: true
+          enabled: parent.ready
+          foreground: root.fg
+          accent: root.accent
+          iconSize: Style.font.caption
+          verticalPadding: Style.space(3)
+          horizontalPadding: Style.space(8)
+          onClicked: root.collectionAct("queue")
+        }
+        Ui.Button {
+          visible: collectionHeader.remote
+          iconText: Model.ICON.save
+          tooltipText: "Save as one of your playlists"
+          bordered: true
+          enabled: parent.ready
+          foreground: root.fg
+          accent: root.accent
+          iconSize: Style.font.caption
+          verticalPadding: Style.space(3)
+          horizontalPadding: Style.space(8)
+          onClicked: root.collectionSave()
+        }
+      }
+    }
+
     // ---- filter chips ---------------------------------------------------
 
     ListView {
@@ -564,21 +818,28 @@ Item {
       delegate: Ui.Button {
         required property string modelData
         height: genreStrip.height
+        readonly property bool web: root.source === "youtube" || root.source === "music"
         text: root.source === "local"
               ? (modelData === "__back__" ? root.localDrill
                  : ({ "": "All", audio: "Music", video: "Videos", albums: "Albums",
                       artists: "Artists", genres: "Genres", folders: "Folders" })[modelData])
+              : web ? ({ "": root.source === "music" ? "Songs" : "Videos",
+                         playlists: "Playlists", albums: "Albums" })[modelData]
               : (modelData === "" ? "All" : Model.facetLabel(modelData, root.source))
         iconText: modelData === Model.MINE ? Model.ICON.star
+                  : web ? ({ "": root.source === "music" ? Model.ICON.music : Model.ICON.video,
+                             playlists: Model.ICON.playlistTv, albums: Model.ICON.album })[modelData]
                   : root.source !== "local" ? ""
                   : ({ __back__: Model.ICON.back, audio: Model.ICON.music, video: Model.ICON.video,
                        albums: Model.ICON.album, artists: Model.ICON.artist,
                        genres: Model.ICON.genre, folders: Model.ICON.folder })[modelData] || ""
         bordered: true
         selected: root.source === "local"
-                  ? (modelData === "__back__" || (root.localMedia === modelData && !root.localDrill)
-                     || (root.localMedia === modelData && root.localDrill !== ""
-                         && ["albums", "artists", "genres", "folders"].indexOf(modelData) >= 0))
+                  ? root.mode !== "dir"
+                    && (modelData === "__back__" || (root.localMedia === modelData && !root.localDrill)
+                        || (root.localMedia === modelData && root.localDrill !== ""
+                            && ["albums", "artists", "genres", "folders"].indexOf(modelData) >= 0))
+                  : web ? modelData === root.webKind
                   : (modelData === "" ? root.genreFilter === ""
                      : modelData.toLowerCase() === root.genreFilter.toLowerCase())
         foreground: root.fg
@@ -590,6 +851,7 @@ Item {
         horizontalPadding: Style.space(9)
         onClicked: {
           if (root.source === "local") root.localMediaChosen(modelData)
+          else if (web) root.webKindChosen(modelData)
           else root.genreChosen(modelData)
         }
       }
@@ -623,6 +885,7 @@ Item {
       onRemove: function (i) { root.queueRemove(i) }
       onMove: function (a, b) { root.queueMove(a, b) }
       onClear: root.queueClear()
+      onSave: root.queueSave()
     }
 
     SavedView {
@@ -645,6 +908,26 @@ Item {
       onClearHistory: root.forget("")
       onPlaylistCommand: function (args) { root.playlistCommand(args) }
       onCancelDownload: function (id) { root.cancelDownload(id) }
+    }
+
+    AllSearchView {
+      id: allView
+      Layout.fillWidth: true
+      Layout.fillHeight: true
+      visible: root.view === "all"
+      results: root.allResults
+      query: root.allQuery
+      searching: root.allSearching
+      artByKey: root.artByKey
+      currentUid: root.currentUid
+      fg: root.fg
+      accent: root.accent
+      onSearch: function (text) { root.searchAll(text) }
+      onShowAll: function (name, text) { root.showAllIn(name, text) }
+      onActivate: function (entry, list, i) {
+        if (entry.kind === "podcast") { root.showAllIn("podcast", root.allQuery); return }
+        root.playFrom(entry, list, i)
+      }
     }
 
     // ---- results --------------------------------------------------------
@@ -834,7 +1117,9 @@ Item {
             Text {
               width: parent.width
               text: root.displayTitle(row.modelData)
-              color: row.ink
+              // A played episode steps back; a new one is in the accent.
+              color: (row.modelData.extra || {}).played && !row.isCurrent ? root.dim
+                     : (row.modelData.extra || {}).new ? root.accent : row.ink
                             font.pixelSize: Style.font.bodySmall + 1
               font.bold: row.isCurrent
               elide: Text.ElideRight
@@ -866,7 +1151,9 @@ Item {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               visible: !row.hot
-              text: root.displayMeta(row.modelData)
+              // TV: the channel's number in this list, for dialling it.
+              text: root.source === "tv" && row.modelData.source === "tv"
+                    ? String(row.index + 1) : root.displayMeta(row.modelData)
               color: root.faint
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -882,36 +1169,94 @@ Item {
                 icon: Model.ICON.play
                 size: 26
                 colorFg: root.fg
-                tip: "Play"
-                onClicked: root.play(row.modelData, row.index)
+                tip: row.collection ? "Play all" : "Play"
+                onClicked: root.playRow(row.modelData, row.index)
+              }
+              IconButton {
+                visible: row.collection
+                icon: Model.ICON.shuffle
+                size: 26
+                colorFg: root.dim
+                tip: "Shuffle"
+                onClicked: root.actOnRow(row.modelData, "shuffle")
               }
               IconButton {
                 icon: Model.ICON.playlist
                 size: 26
                 colorFg: root.dim
                 active: !!root.queueUids[row.modelData.uid]
-                tip: "Add to the queue"
+                tip: row.collection ? "Add all to the queue" : "Add to the queue"
                 onClicked: root.enqueue(row.modelData)
               }
             }
           }
 
+          readonly property bool collection: Model.isCollection(row.modelData)
+
           Menu {
             id: rowMenu
             MenuItem {
-              text: "Play"
-              onTriggered: root.play(row.modelData, row.index)
+              text: row.collection ? "Play all" : "Play"
+              onTriggered: root.playRow(row.modelData, row.index)
             }
             MenuItem {
-              text: "Add to queue"
+              text: "Shuffle"
+              visible: row.collection
+              height: visible ? implicitHeight : 0
+              onTriggered: root.actOnRow(row.modelData, "shuffle")
+            }
+            MenuItem {
+              text: row.collection ? "Open" : "Add to queue"
+              onTriggered: row.collection ? root.play(row.modelData, row.index)
+                                          : root.enqueue(row.modelData)
+            }
+            MenuItem {
+              text: "Play next"
+              onTriggered: root.enqueueNext(row.modelData)
+            }
+            MenuItem {
+              readonly property bool can: !row.collection && !row.modelData.is_live
+                                          && ["youtube", "music", "local"].indexOf(row.modelData.source) >= 0
+              visible: can
+              height: visible ? implicitHeight : 0
+              text: "Start radio"
+              onTriggered: root.startRadio(row.modelData)
+            }
+            MenuItem {
+              readonly property var ch: Model.channelOf(row.modelData)
+              visible: !!ch
+              height: visible ? implicitHeight : 0
+              text: (row.modelData.source === "music" ? "Go to artist" : "Go to channel")
+                    + (ch ? ": " + ch.name : "")
+              onTriggered: root.openChannel(row.modelData)
+            }
+            MenuItem {
+              visible: row.modelData.source === "local" && row.modelData.kind === "track"
+              height: visible ? implicitHeight : 0
+              text: "Edit tags…"
+              onTriggered: tagEditor.open(row.modelData)
+            }
+            MenuItem {
+              readonly property bool played: !!(row.modelData.extra || {}).played
+              visible: row.modelData.kind === "episode"
+              height: visible ? implicitHeight : 0
+              text: played ? "Mark as not played" : "Mark as played"
+              onTriggered: root.markPlayed(row.modelData, !played)
+            }
+            MenuItem {
+              text: "Add all to the queue"
+              visible: row.collection
+              height: visible ? implicitHeight : 0
               onTriggered: root.enqueue(row.modelData)
             }
             MenuItem {
               text: "Add to favourites"
+              enabled: !row.collection
               onTriggered: root.favorite(row.modelData, true)
             }
             PlaylistMenu {
               title: "Add to playlist"
+              enabled: !row.collection
               playlists: root.playlists
               onChosen: function (id) {
                 if (id) root.playlistCommand({ action: "add", playlist: id, item: row.modelData })
@@ -921,8 +1266,8 @@ Item {
             }
             DownloadMenu {
               title: "Download"
-              enabled: ["youtube", "music"].indexOf(row.modelData.source) >= 0
-                       || row.modelData.kind === "episode"
+              enabled: !row.collection && (["youtube", "music"].indexOf(row.modelData.source) >= 0
+                                           || row.modelData.kind === "episode")
               allowVideo: row.modelData.source === "youtube"
               defaultVideo: root.downloadVideoFormat
               defaultAudio: root.downloadAudioFormat
@@ -1176,7 +1521,8 @@ Item {
       }
 
       Text {
-        visible: root.items.length > 1
+        // Not under playlists, albums or folders: each of those plays itself.
+        visible: root.items.length > 1 && !Model.isCollection(root.items[0])
         text: "play all"
         color: playAllArea.containsMouse ? root.accent : root.dim
         font.pixelSize: Style.font.caption
@@ -1196,10 +1542,14 @@ Item {
   // ------------------------------------------------------------- helpers
 
   function emptyText() {
+    if (root.loading && root.mode === "playlist") return "Opening the playlist…"
+    if (root.loading && root.mode === "dir") return "Reading the folder…"
     if (root.loading) return root.source === "youtube" || root.source === "music"
                              ? "Searching…" : "Loading…"
     if (root.errorText) return root.errorText
     if (!root.connected) return "Starting…"
+    if (root.mode === "playlist") return "This playlist is empty, private or no longer exists."
+    if (root.mode === "dir") return "There is nothing playable in this folder."
     if (root.source === "local") {
       return root.scanning ? "Looking for music in your folders…"
                            : "No music found. Add your music folders in Settings → Media & library."
@@ -1298,7 +1648,8 @@ Item {
     // A row on its way out can be asked once more after its entry is gone.
     if (!entry || !entry.title) return ""
     if (entry.kind === "genre" || entry.kind === "group" || entry.kind === "country"
-        || entry.kind === "folder" || entry.kind === "album" || entry.kind === "artist") {
+        || entry.kind === "folder" || entry.kind === "album" || entry.kind === "artist"
+        || entry.kind === "playlist") {
       return entry.title
     }
     if (entry.source === "radio" || entry.source === "tv") {
@@ -1319,6 +1670,17 @@ Item {
       parts.push(Model.count(extra.count || 0, "track", "tracks"))
       return parts.join("  ·  ")
     }
+    if (Model.isCollection(entry)) {
+      // A YouTube or Music playlist or album: who made it, and its size
+      // when the search said (YouTube's playlist search does not).
+      if (extra.label && extra.label !== "Playlist") parts.push(extra.label)
+      else parts.push(entry.source === "music" && entry.kind === "album" ? "Album" : "Playlist")
+      if (entry.artist) parts.push(entry.artist)
+      if (extra.count) parts.push(Model.count(extra.count, entry.source === "music" ? "song" : "video",
+                                               entry.source === "music" ? "songs" : "videos"))
+      if (extra.year) parts.push(extra.year)
+      return parts.join("  ·  ")
+    }
     if (entry.source === "radio") {
       if (entry.artist) parts.push(entry.artist)
       if (root.showCountryMeta) {
@@ -1334,9 +1696,12 @@ Item {
       if (entry.is_live) parts.push("live now")
     } else if (entry.source === "podcast") {
       if (entry.kind === "podcast") {
+        if (extra.new) parts.push("● " + extra.new + " new")
         if (entry.artist) parts.push(entry.artist)
         if (extra.genre) parts.push(extra.genre)
       } else {
+        if (extra.new) parts.push("● New")
+        if (extra.played) parts.push("✓ Played")
         if (extra.published) parts.push(Model.shortDate(extra.published))
         if (extra.description) parts.push(extra.description)
       }
@@ -1358,7 +1723,7 @@ Item {
 
   function displayMeta(entry) {
     if (!entry) return ""
-    if (["folder", "album", "artist", "genre"].indexOf(entry.kind) >= 0) return ""
+    if (["folder", "album", "artist", "genre", "playlist"].indexOf(entry.kind) >= 0) return ""
     // Every radio stream is live, so "live" on every radio row would say
     // nothing and hide the bitrate; on television it does mean something.
     if (entry.is_live && entry.source !== "radio") return "live"
@@ -1379,5 +1744,38 @@ Item {
     if (root.loading || !root.more || root.errorText !== "") return
     if (!view || view.contentHeight <= 0) return
     if (view.contentY + view.height >= view.contentHeight - Style.space(140)) root.wantMore()
+  }
+
+  // TV: the number being dialled, and the channel it picks.
+  Rectangle {
+    visible: root.dialText !== ""
+    anchors.centerIn: parent
+    width: dialLabel.implicitWidth + Style.space(36)
+    height: dialLabel.implicitHeight + Style.space(24)
+    radius: Style.cornerRadius
+    color: Color.popups.background
+    border.width: 1
+    border.color: root.accent
+    z: 40
+    Text {
+      id: dialLabel
+      anchors.centerIn: parent
+      readonly property int n: parseInt(root.dialText, 10) || 0
+      readonly property var hit: n > 0 && n <= root.items.length ? root.items[n - 1] : null
+      text: root.dialText + (hit ? "  ·  " + Model.cleanName(hit.title) : "")
+      color: root.fg
+      font.pixelSize: Style.font.body + 4
+      font.bold: true
+    }
+  }
+
+  TagEditor {
+    id: tagEditor
+    anchors.fill: parent
+    z: 50
+    fg: root.fg
+    accent: root.accent
+    onSave: function (path, fields, art) { root.saveTags(path, fields, art) }
+    onPickArt: root.pickArt()
   }
 }

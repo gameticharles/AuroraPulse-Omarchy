@@ -70,6 +70,18 @@ Panel {
   property bool castSearching: false
   property var subtitleChoices: []
   property string subtitleSelected: ""
+  // The audio tracks (languages) of what is playing, when there are several.
+  property var audioTracks: []
+  property string audioTrackSelected: ""
+  // Folders played from "Play a folder", newest first: [{path, name, exists}].
+  property var recentFolders: []
+  // One search across every source: { source: { items, error, done } }.
+  property var allResults: ({})
+  property string allQuery: ""
+  property int allRequestId: 0
+  property bool allSearching: false
+  // TV: the channel number being typed (digits on the TV tab).
+  property string dialText: ""
   // Renditions of an adaptive stream (TV): [{key, label}], best first.
   property var qualityChoices: []
   property string qualitySelected: ""
@@ -125,6 +137,26 @@ Panel {
   readonly property string localDrillName: localFilter
       ? String(localFilter.album || localFilter.artist || localFilter.genre
                || localFilter.folderName || "") : ""
+  // YouTube and Music: what a search looks for, "" (videos or songs),
+  // "playlists" or (Music) "albums".
+  property string webKind: ""
+  // A playlist or album opened from YouTube or Music (browseMode "playlist"),
+  // or a folder picked to play (Local, browseMode "dir"):
+  // { source, kind, title, artist, url, path, count, art }.
+  property var collection: null
+  // The list it was opened from, put back as it was by the back button.
+  property var collectionReturn: null
+  // What the header over an open playlist, album, folder or library group
+  // shows, or null when none is open.
+  readonly property var openCollection: {
+    if (collection && (browseMode === "playlist" || browseMode === "dir")) return collection
+    if (source === "local" && localFilter)
+      return { source: "local", kind: localFilter.folderName !== undefined ? "folder" : "group",
+               title: localDrillName, path: folder }
+    return null
+  }
+  // Requests whose list is played or queued rather than shown: id -> { action, label }.
+  property var fetchActions: ({})
   property var items: []
   property var genres: []
   property var countries: []
@@ -310,6 +342,17 @@ Panel {
     var args = { source: source, mode: browseMode,
                  limit: (source === "youtube" || source === "music") ? 30 : 60 }
     if (browseMode === "search") args.query = Model.query(searchText)
+    if (browseMode === "playlist" && collection) {
+      // A playlist or album is listed whole, to be played or queued whole; a
+      // channel or artist page lists its uploads or songs.
+      return { source: source, mode: collection.kind === "channel" ? "channel" : "playlist",
+               query: collection.url, limit: collection.kind === "channel" ? 200 : 500 }
+    }
+    if (browseMode === "dir" && collection) {
+      return { source: "local", mode: "dir", folder: collection.path, limit: 3000 }
+    }
+    if ((source === "youtube" || source === "music") && browseMode === "search" && webKind)
+      args.mode = webKind
     if (source === "radio") {
       if (browseMode === "browse") args.section = "popular"
       if (country) args.country = country
@@ -341,7 +384,8 @@ Panel {
   function loadSource() {
     if (!connected) return
     // YouTube and Music only search; with no query there is nothing to ask.
-    if ((source === "youtube" || source === "music") && browseMode !== "search") {
+    if ((source === "youtube" || source === "music") && browseMode !== "search"
+        && browseMode !== "playlist") {
       loading = false
       return
     }
@@ -384,7 +428,8 @@ Panel {
       browseMode: browseMode, searchText: searchText, country: country,
       genre: genre, group: group, folder: folder, sort: sort, items: items,
       genres: genres, countries: countries, listTotal: listTotal,
-      listLimit: listLimit, listMore: listMore,
+      listLimit: listLimit, listMore: listMore, webKind: webKind,
+      collection: collection, collectionReturn: collectionReturn,
       top: browser ? browser.topIndex() : 0
     }
     tabState = next
@@ -411,6 +456,9 @@ Panel {
       listTotal = saved.listTotal
       listLimit = saved.listLimit
       listMore = !!saved.listMore
+      webKind = saved.webKind || ""
+      collection = saved.collection || null
+      collectionReturn = saved.collectionReturn || null
       var top = saved.top || 0
       if (top > 0) Qt.callLater(function () { if (browser) browser.showIndex(top, false) })
     } else {
@@ -426,6 +474,9 @@ Panel {
       listTotal = -1
       listLimit = 60
       listMore = false
+      webKind = ""
+      collection = null
+      collectionReturn = null
     }
     listError = ""
     loading = false
@@ -433,7 +484,7 @@ Panel {
     // the cached rows; a YouTube search is several seconds of yt-dlp, so a
     // tab that already has results keeps them until the user searches again.
     if (name === "youtube" || name === "music") {
-      if (!items.length && searchText) loadSource()
+      if (!items.length && (searchText || browseMode === "playlist")) loadSource()
     } else {
       loadSource()
     }
@@ -442,6 +493,19 @@ Panel {
 
   function submitSearch() {
     var text = Model.query(searchText)
+    // A pasted playlist link opens the playlist, on whichever of the two
+    // tabs it was pasted into (a Music link in YouTube plays the videos).
+    var link = (source === "youtube" || source === "music") ? Model.playlistLink(searchText) : ""
+    if (link) {
+      collectionReturn = null
+      openPlaylist({ source: source, kind: "playlist", title: "Playlist", url: link,
+                     pasted: true })
+      return
+    }
+    if (browseMode === "playlist" || browseMode === "dir") {
+      collection = null
+      collectionReturn = null
+    }
     if (!text && (source === "radio" || source === "tv" || source === "local"
                   || source === "podcast")) {
       browseMode = "browse"
@@ -482,6 +546,257 @@ Panel {
     loadSource()
   }
 
+  // ---- playlists, albums and folders
+
+  // YouTube and Music: search videos or songs (""), playlists or albums.
+  function chooseWebKind(kind) {
+    if (kind === webKind && browseMode !== "playlist") return
+    webKind = kind
+    collection = null
+    collectionReturn = null
+    browseMode = "search"
+    items = []
+    listMore = false
+    listTotal = -1
+    loadSource()
+  }
+
+  // A YouTube or Music playlist or album: list every video or song in it.
+  function openPlaylist(entry) {
+    var extra = entry.extra || {}
+    if (!collectionReturn && browseMode !== "playlist")
+      collectionReturn = { browseMode: browseMode, items: items, listTotal: listTotal,
+                           listMore: listMore, top: browser ? browser.topIndex() : 0 }
+    collection = { source: entry.source || source, kind: entry.kind || "playlist",
+                   title: entry.title || "Playlist", artist: entry.artist || extra.channel || "",
+                   url: entry.url || "", count: extra.count || 0, art: entry.art || {},
+                   uid: entry.uid || "", label: extra.label || "", pasted: !!entry.pasted }
+    browseMode = "playlist"
+    items = []
+    listTotal = -1
+    listMore = false
+    loadSource()
+  }
+
+  // A folder anywhere on disk, picked to play: everything playable in it and
+  // in the folders below it, in name order.
+  function openFolderPath(path, then) {
+    path = String(path || "").trim()
+    if (!path) return
+    if (source !== "local") selectSource("local", true)
+    browserView = "browse"
+    localFilter = null
+    localGroup = ""
+    if (!collectionReturn && browseMode !== "dir")
+      collectionReturn = { browseMode: browseMode, items: items, listTotal: listTotal,
+                           listMore: listMore, top: browser ? browser.topIndex() : 0 }
+    collection = { source: "local", kind: "dir", title: Model.baseName(path), path: path,
+                   artist: path, art: {} }
+    browseMode = "dir"
+    items = []
+    listTotal = -1
+    listMore = false
+    if (then) playFirstResult = then === "play"
+    loadSource()
+  }
+
+  // Back to the list the playlist, album or folder was opened from.
+  function closeCollection() {
+    var back = collectionReturn
+    collection = null
+    collectionReturn = null
+    listError = ""
+    loading = false
+    if (back && back.browseMode !== "playlist" && back.browseMode !== "dir") {
+      browseMode = back.browseMode
+      items = back.items || []
+      listTotal = back.listTotal
+      listMore = !!back.listMore
+      var top = back.top || 0
+      if (top > 0) Qt.callLater(function () { if (browser) browser.showIndex(top, false) })
+      if (!items.length) loadSource()
+      return
+    }
+    browseMode = (source === "youtube" || source === "music") ? "search" : "browse"
+    items = []
+    listTotal = -1
+    listMore = false
+    loadSource()
+  }
+
+  // The request that lists what a playlist, album, folder or library group
+  // row holds, so its play and queue buttons work without opening it.
+  function collectionArgs(entry) {
+    var extra = entry.extra || {}
+    if (entry.source === "youtube" || entry.source === "music")
+      return { source: entry.source, mode: entry.kind === "channel" ? "channel" : "playlist",
+               query: entry.url, limit: 500 }
+    if (entry.kind === "folder")
+      return { source: "local", mode: "dir", folder: extra.path || "", limit: 3000 }
+    var args = { source: "local", mode: "browse", limit: 2000,
+                 sort: entry.kind === "album" ? "title" : "artist" }
+    args[entry.kind] = extra[entry.kind] !== undefined ? extra[entry.kind] : entry.title
+    return args
+  }
+
+  // Play, shuffle or queue a whole playlist, album, folder or group row.
+  // how: "play" | "shuffle" | "queue".
+  function actOnCollection(entry, how) {
+    if (!entry) return
+    var acts = Object.assign({}, fetchActions)
+    acts[request("source", collectionArgs(entry))] = { how: how, label: entry.title || "" }
+    fetchActions = acts
+    if (how !== "queue") ensureOn()
+  }
+
+  // The header's buttons, over what is open now. A playlist, album or picked
+  // folder is already listed whole; a library group may be a page of it.
+  function actOnOpen(how) {
+    var open = openCollection
+    if (!open) return
+    if ((browseMode === "playlist" || browseMode === "dir") || !listMore) {
+      playList(items, how, open.title)
+      return
+    }
+    var args = listArgs()
+    args.limit = 2000
+    args.offset = 0
+    var acts = Object.assign({}, fetchActions)
+    acts[request("source", args)] = { how: how, label: open.title || "" }
+    fetchActions = acts
+  }
+
+  function playList(list, how, label) {
+    list = (list || []).filter(function (e) { return !Model.isCollection(e) })
+    if (!list.length) {
+      playError = "There is nothing to play in " + (label || "that")
+      errorTimer.restart()
+      return
+    }
+    if (how === "queue" || how === "next") {
+      request("enqueue", { items: list.slice(0, 500), label: label || "", next: how === "next" })
+      return
+    }
+    ensureOn()
+    playError = ""
+    request("play", { items: (how === "shuffle" ? Model.shuffled(list) : list).slice(0, 500),
+                      start: 0 })
+  }
+
+  // An open YouTube or Music playlist, kept as one of the user's own.
+  function saveCollection() {
+    if (!collection || !items.length) return
+    request("playlist", { action: "create", name: String(collection.title || "Playlist").slice(0, 80),
+                          items: items.slice(0, 500) })
+  }
+
+  // Play next: right after what is playing. A playlist, album, folder or
+  // group row is fetched and its entries go there in order.
+  function enqueueNext(entry) {
+    if (!entry) return
+    if (Model.isCollection(entry)) actOnCollection(entry, "next")
+    else request("enqueue", { item: entry, next: true })
+  }
+
+  // A radio from a track: it plays now, with more like it queued after.
+  function startRadio(entry) {
+    if (!entry) return
+    ensureOn()
+    playError = ""
+    request("radio", { item: entry })
+  }
+
+  // A YouTube channel's uploads or a YouTube Music artist's songs.
+  function openChannel(entry) {
+    var ch = Model.channelOf(entry)
+    if (!ch) return
+    if (source !== entry.source) selectSource(entry.source, true)
+    browserView = "browse"
+    openPlaylist({ source: entry.source, kind: "channel", title: ch.name,
+                   url: ch.url, art: {}, extra: {} })
+  }
+
+  function saveQueue() {
+    request("playlist", { action: "create", fromQueue: true,
+                          name: "Queue " + Qt.formatDateTime(new Date(), "d MMM HH:mm") })
+  }
+
+  // ---- one search across every source
+
+  function searchAll(text) {
+    var q = Model.query(text)
+    allQuery = q
+    allResults = ({})
+    if (!q) { allSearching = false; return }
+    allSearching = true
+    allRequestId = request("search_all", { query: q, limit: 8 })
+  }
+
+  function handleSearchAll(msg) {
+    if (msg.id !== allRequestId) return
+    if (msg.done) { allSearching = false; return }
+    var next = Object.assign({}, allResults)
+    next[msg.source] = { items: msg.items || [], error: msg.error || "" }
+    allResults = next
+  }
+
+  // "Show all" under a source: that tab, searching the same words.
+  function showAllIn(name, text) {
+    browserView = "browse"
+    selectSource(name, true)
+    webKind = ""
+    collection = null
+    collectionReturn = null
+    searchText = text
+    submitSearch()
+  }
+
+  // ---- TV direct dial: digits pick the channel with that number in the list
+
+  function dialDigit(d) {
+    if (dialText.length >= 4) return
+    dialText = dialText + d
+    dialTimer.restart()
+  }
+
+  function dialCommit() {
+    var n = parseInt(dialText, 10)
+    dialText = ""
+    if (n > 0 && n <= items.length) {
+      playEntry(items[n - 1], n - 1)
+      if (browser) browser.showIndex(n - 1, true)
+    } else if (n > 0) {
+      showNotice("There is no channel " + n + " in this list")
+    }
+  }
+
+  // ---- files and folders, from the desktop's own chooser
+
+  // purpose: "folder" (play it), "m3u" (import a playlist), "epg" (import a
+  // TV guide) or "art" (a cover for the tag editor).
+  function pickFile(purpose) {
+    if (filePicker.running) return
+    var spec = ({ folder: ["--directory", "--title", "Play a folder"],
+                  m3u: ["--title", "Import a playlist", "--extensions", "m3u m3u8"],
+                  epg: ["--title", "Import a TV guide (XMLTV)", "--extensions", "xml gz"],
+                  art: ["--title", "Choose a cover picture", "--extensions", "jpg jpeg png"] })[purpose]
+    if (!spec) return
+    filePicker.purpose = purpose
+    filePicker.args = spec
+    filePicker.chosen = ""
+    filePicker.running = true
+  }
+
+  function filePicked(purpose, path) {
+    if (purpose === "folder") openFolderPath(path, "play")
+    else if (purpose === "m3u") request("playlist", { action: "import", path: path })
+    else if (purpose === "epg") request("epg_import", { path: path })
+    else if (purpose === "art" && browser) browser.artPicked(path)
+  }
+
+  // The Local tab's "Play a folder" button: the desktop's own folder chooser.
+  function pickFolder() { pickFile("folder") }
+
   function subscribe(show, on) {
     if (!show) return
     request("custom", { op: on ? "add" : "remove", kind: "podcast",
@@ -514,6 +829,10 @@ Panel {
       openLocalGroup(entry)
       return
     }
+    if (Model.isCollection(entry)) {
+      openPlaylist(entry)
+      return
+    }
     ensureOn()
     var list = items || []
     var at = (rowIndex !== undefined && rowIndex >= 0 && list[rowIndex]
@@ -523,8 +842,11 @@ Panel {
       request("play", { item: entry })
       return
     }
-    var low = Math.max(0, at - 50)
-    var high = Math.min(list.length, at + 150)
+    // A playlist, album or folder is queued whole (up to the queue's 500),
+    // so it plays on to its end; other lists get a window around the row.
+    var whole = browseMode === "playlist" || browseMode === "dir"
+    var low = whole ? Math.max(0, Math.min(at, list.length - 500)) : Math.max(0, at - 50)
+    var high = Math.min(list.length, whole ? low + 500 : at + 150)
     request("play", { items: list.slice(low, high), start: at - low })
     rememberBrowse()
     // Shown at once; the daemon confirms with a state event a moment later.
@@ -546,6 +868,7 @@ Panel {
       localFilter = f
       folder = ""
     }
+    leaveFolder()
     browseMode = "browse"
     items = []
     listTotal = -1
@@ -559,6 +882,7 @@ Panel {
       localGroup = ""
       localMedia = choice
     }
+    leaveFolder()
     localFilter = null
     folder = ""
     items = []
@@ -567,11 +891,20 @@ Panel {
   }
 
   function closeLocalGroup() {
+    leaveFolder()
     localFilter = null
     folder = ""
     items = []
     listTotal = -1
     loadSource()
+  }
+
+  // A picked folder is left for one of the library's own views.
+  function leaveFolder() {
+    if (browseMode !== "dir") return
+    browseMode = Model.query(searchText) ? "search" : "browse"
+    collection = null
+    collectionReturn = null
   }
 
   function playAll(entries) {
@@ -582,6 +915,10 @@ Panel {
 
   function enqueue(entry) {
     if (!entry) return
+    if (Model.isCollection(entry)) {
+      actOnCollection(entry, "queue")
+      return
+    }
     request("enqueue", { item: entry })
   }
 
@@ -772,6 +1109,24 @@ Panel {
       subtitleSelected = msg.selected || ""
       break
 
+    case "audiotracks":
+      audioTracks = msg.choices || []
+      audioTrackSelected = msg.selected || ""
+      break
+
+    case "recent_folders":
+      recentFolders = msg.folders || []
+      break
+
+    case "search_all":
+      handleSearchAll(msg)
+      break
+
+    case "tagged":
+      // The list shows the old tags until it is read again.
+      if (source === "local" && browserView === "browse") loadSource()
+      break
+
     case "quality":
       qualityChoices = msg.choices || []
       qualitySelected = msg.selected || ""
@@ -926,6 +1281,14 @@ Panel {
         guideLoading = false
       } else if (msg.id !== undefined && facetRequests[msg.id]) {
         // A missing facet list is not worth a red banner.
+      } else if (msg.id !== undefined && fetchActions[msg.id]) {
+        var failed = Object.assign({}, fetchActions)
+        var what = failed[msg.id].label
+        delete failed[msg.id]
+        fetchActions = failed
+        playError = "Could not open " + (what || "that") + ": "
+                    + (msg.message || Model.reasonText(msg.reason, ""))
+        errorTimer.restart()
       } else {
         playError = msg.message || Model.reasonText(msg.reason, "")
         errorTimer.restart()
@@ -945,6 +1308,14 @@ Panel {
     if (msg.id === undefined) return
     if (msg.show && msg.id === listRequestId) {
       podcastShow = Object.assign({}, podcastShow || {}, msg.show)
+    }
+    var act = fetchActions[msg.id]
+    if (act) {
+      var left = Object.assign({}, fetchActions)
+      delete left[msg.id]
+      fetchActions = left
+      playList(msg.items || [], act.how, act.label)
+      return
     }
     var facet = facetRequests[msg.id]
     if (facet) {
@@ -992,9 +1363,16 @@ Panel {
       listMore = !!msg.more
     }
     listTotal = (msg.total === undefined || msg.total === null) ? -1 : msg.total
+    if (browseMode === "playlist" && collection && collection.pasted && items.length) {
+      // A pasted link is named once its list says what it is.
+      collection = Object.assign({}, collection, {
+        pasted: false, title: String(items[0].album || collection.title),
+        count: items.length, art: items[0].art || {} })
+    }
     revealPending()
     if (playFirstResult && items.length) {
-      playFirstResult = false
+      // A playlist or folder found first is opened, and its first entry played.
+      if (!Model.isCollection(items[0])) playFirstResult = false
       playEntry(items[0], 0)
     }
     if (msg.source === "local") scanning = !!msg.scanning
@@ -1028,12 +1406,17 @@ Panel {
     try { saved = JSON.parse(String(settings2.lastBrowse || "null")) } catch (e) { saved = null }
     if (saved && saved.source === tab) {
       var next = Object.assign({}, tabState)
+      var opened = (saved.browseMode === "playlist" || saved.browseMode === "dir")
+                   && saved.collection ? saved.collection : null
+      var fallbackMode = (tab === "youtube" || tab === "music") ? "search" : "browse"
       next[tab] = {
-        browseMode: saved.browseMode || ((tab === "youtube" || tab === "music") ? "search" : "browse"),
+        browseMode: (opened || (saved.browseMode !== "playlist" && saved.browseMode !== "dir"))
+                    && saved.browseMode ? saved.browseMode : fallbackMode,
         searchText: saved.searchText || "", country: saved.country || "",
         genre: saved.genre || "", group: saved.group || "", folder: saved.folder || "",
         sort: saved.sort || "title", items: [], genres: [], countries: [],
-        listTotal: -1, listLimit: 60, listMore: false, top: 0
+        listTotal: -1, listLimit: 60, listMore: false, top: 0,
+        webKind: saved.webKind || "", collection: opened, collectionReturn: null
       }
       tabState = next
       if (tab === "local") {
@@ -1064,9 +1447,21 @@ Panel {
       state.localGroup = localGroup
       if (localFilter && JSON.stringify(localFilter).length < 160) state.localFilter = localFilter
     }
+    if (webKind) state.webKind = webKind
+    if ((browseMode === "playlist" || browseMode === "dir") && collection)
+      state.collection = { source: collection.source, kind: collection.kind,
+                           title: String(collection.title || "").slice(0, 80),
+                           artist: String(collection.artist || "").slice(0, 80),
+                           url: collection.url || "", path: collection.path || "" }
     // Angle brackets escaped: the daemon strips anything that looks like
     // markup from a setting, and JSON.parse reads \u003c back as "<".
     var text = JSON.stringify(state).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
+    if (text.length > 500 && state.collection) {
+      // A long link or path: remember the tab without what was open in it.
+      delete state.collection
+      state.browseMode = (source === "youtube" || source === "music") ? "search" : "browse"
+      text = JSON.stringify(state).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
+    }
     if (text.length > 500) return
     if (text !== String(settings2.lastBrowse || "")) changeSetting("lastBrowse", text)
   }
@@ -1143,7 +1538,8 @@ Panel {
       lyricIndex = -1
       return
     }
-    lyricIndex = Model.activeLyricIndex(lyrics.lines, position)
+    // A positive offset shows each line later.
+    lyricIndex = Model.activeLyricIndex(lyrics.lines, position - (lyrics.offset || 0) / 1000)
   }
 
   onPositionChanged: if (lyricsOpen) syncLyric()
@@ -1182,6 +1578,41 @@ Panel {
     id: restartTimer
     interval: 2000
     onTriggered: root.restarting = false
+  }
+
+  // Omarchy's file chooser (the desktop portal): "Play a folder", importing a
+  // playlist or a TV guide, a cover for the tag editor. See pickFile().
+  Process {
+    id: filePicker
+    property string chosen: ""
+    property string purpose: ""
+    property var args: []
+    command: ["sh", "-c", "picker=$(command -v omarchy-file-select"
+              + " || echo /usr/share/omarchy/bin/omarchy-file-select);"
+              + " [ -x \"$picker\" ] || exit 127;"
+              + " exec \"$picker\" \"$@\"", "pick"].concat(args)
+    stdout: SplitParser {
+      onRead: function (data) {
+        if (!filePicker.chosen && String(data).trim()) filePicker.chosen = String(data).trim()
+      }
+    }
+    onExited: function (code) {
+      if (code === 0 && chosen) {
+        root.filePicked(purpose, chosen)
+      } else if (code === 127) {
+        root.playError = "No file chooser was found (omarchy-file-select)"
+        errorTimer.restart()
+      } else if (code !== 1) {
+        root.playError = "The file chooser did not open"
+        errorTimer.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: dialTimer
+    interval: 1400
+    onTriggered: root.dialCommit()
   }
 
   Timer {
@@ -1456,7 +1887,16 @@ Panel {
         }
         else if (k === Qt.Key_Q) root.browserView = root.browserView === "queue" ? "browse" : "queue"
         else if (k === Qt.Key_Slash || (k === Qt.Key_F && (event.modifiers & Qt.ControlModifier))) browser.focusSearch()
+        // On the TV tab digits dial a channel; elsewhere 1-5 pick a tab.
+        else if (k >= Qt.Key_0 && k <= Qt.Key_9 && root.source === "tv"
+                 && root.browserView === "browse" && !root.settingsOpen)
+          root.dialDigit(String(k - Qt.Key_0))
         else if (k >= Qt.Key_1 && k <= Qt.Key_5) root.selectSource(["radio", "tv", "youtube", "music", "local"][k - Qt.Key_1], true)
+        // Backspace: out of an open playlist, album, folder or group.
+        else if (k === Qt.Key_Backspace && root.openCollection) {
+          if (root.browseMode === "playlist" || root.browseMode === "dir") root.closeCollection()
+          else root.closeLocalGroup()
+        }
         else if (k === Qt.Key_Escape) root.close()
         else handled = false
         event.accepted = handled
@@ -1674,6 +2114,41 @@ Panel {
                     onObjectRemoved: function (index, object) { qualityMenu.removeItem(object) }
                   }
                 }
+              }
+              IconButton {
+                // Only when the video or channel offers several languages.
+                visible: root.hasItem && root.audioTracks.length > 1
+                icon: Model.ICON.translate
+                size: 28
+                colorFg: root.panelDim
+                colorAccent: root.accent
+                tip: "Audio language"
+                onClicked: {
+                  root.request("audio_track", { action: "list" })
+                  audioMenu.popup()
+                }
+                Menu {
+                  id: audioMenu
+                  Instantiator {
+                    model: root.audioTracks
+                    delegate: MenuItem {
+                      required property var modelData
+                      text: (modelData.key === root.audioTrackSelected ? "● " : "    ") + modelData.label
+                      onTriggered: root.request("audio_track", { action: "select", key: modelData.key })
+                    }
+                    onObjectAdded: function (index, object) { audioMenu.insertItem(index, object) }
+                    onObjectRemoved: function (index, object) { audioMenu.removeItem(object) }
+                  }
+                }
+              }
+              IconButton {
+                visible: root.hasItem && root.hasVideo
+                icon: Model.ICON.camera
+                size: 28
+                colorFg: root.panelDim
+                colorAccent: root.accent
+                tip: "Screenshot (to Pictures › AuroraPulse)"
+                onClicked: root.request("screenshot")
               }
               IconButton {
                 visible: root.hasItem && root.hasVideo
@@ -2316,6 +2791,7 @@ Panel {
           playlistView: root.playlistView
           onPlaylistCommand: function (args) {
             if (args.action === "close") { root.playlistView = null; return }
+            if (args.action === "pickImport") { root.pickFile("m3u"); return }
             root.request("playlist", args)
           }
           onSearchDone: keyCatcher.forceActiveFocus()
@@ -2355,6 +2831,41 @@ Panel {
             root.request("catalogue", { sync: true, full: true, source: src })
           }
           onSelectSource: function (name) { root.selectSource(name, true) }
+          webKind: root.webKind
+          collection: root.openCollection
+          onWebKindChosen: function (kind) { root.chooseWebKind(kind) }
+          onCollectionBack: {
+            if (root.browseMode === "playlist" || root.browseMode === "dir") root.closeCollection()
+            else root.closeLocalGroup()
+          }
+          onCollectionAct: function (how) { root.actOnOpen(how) }
+          onCollectionSave: root.saveCollection()
+          onActOnRow: function (entry, how) { root.actOnCollection(entry, how) }
+          onPickFolder: root.pickFolder()
+          recentFolders: root.recentFolders
+          onOpenRecentFolder: function (path) { root.openFolderPath(path, "play") }
+          onForgetRecentFolder: function (path) {
+            root.request("recent_folders", { action: path ? "remove" : "clear", path: path })
+          }
+          onWantRecentFolders: root.request("recent_folders", { action: "list" })
+          onEnqueueNext: function (entry) { root.enqueueNext(entry) }
+          onStartRadio: function (entry) { root.startRadio(entry) }
+          onOpenChannel: function (entry) { root.openChannel(entry) }
+          onSaveTags: function (path, fields, art) {
+            root.request("tags", { path: path, fields: fields, art: art })
+          }
+          onPickArt: root.pickFile("art")
+          onMarkPlayed: function (entry, played) {
+            root.request("podcast", { action: "mark", uid: entry.uid, played: played })
+            Qt.callLater(root.loadSource)
+          }
+          onQueueSave: root.saveQueue()
+          allResults: root.allResults
+          allQuery: root.allQuery
+          allSearching: root.allSearching
+          onSearchAll: function (text) { root.searchAll(text) }
+          onShowAllIn: function (name, text) { root.showAllIn(name, text) }
+          dialText: root.dialText
           onSearchEdited: function (text) {
             if (text === root.searchText) return
             root.searchText = text
@@ -2363,6 +2874,8 @@ Panel {
             // waits for Enter instead of firing a search per pause in typing.
             if (root.source === "youtube" || root.source === "music") {
               searchDebounce.stop()
+              // A pasted playlist link opens at once: there is nothing to type.
+              if (Model.playlistLink(text)) root.submitSearch()
             } else if (text === "") {
               searchDebounce.stop()
               root.submitSearch()
@@ -2410,6 +2923,8 @@ Panel {
           onSeek: function (seconds) { root.seekSeconds(seconds) }
           onSizePicked: function (value) { root.changeSetting("lyricsSize", value) }
           onSave: root.request("lyrics_save", {})
+          onNudge: function (ms) { root.request("lyrics_offset", { offset: ms }) }
+          onSetText: function (text) { root.request("lyrics_set", { text: text }) }
         }
 
         GuideView {
@@ -2437,6 +2952,7 @@ Panel {
             if (key === "scanRoots" || key === "audioExtensions") root.request("library_stats")
           }
           onCommand: function (cmd, args) {
+            if (cmd === "pickFile") { root.pickFile(args.purpose); return }
             root.request(cmd, args)
             if (cmd === "scan") root.scanning = true
           }
@@ -2510,6 +3026,12 @@ Panel {
         // omarchy-shell aurora-pulse tab local:albums   (artists, genres, folders, video)
         root.selectSource("local", true)
         root.chooseLocalView(name.slice(6))
+      } else if (/^(youtube|music):/.test(name)) {
+        // omarchy-shell aurora-pulse tab music:albums   (youtube:playlists, music:playlists, music:songs)
+        var parts = name.split(":")
+        root.selectSource(parts[0], true)
+        root.chooseWebKind(parts[1] === "playlists" || (parts[1] === "albums" && parts[0] === "music")
+                           ? parts[1] : "")
       } else {
         root.selectSource(name, true)
       }
@@ -2528,6 +3050,36 @@ Panel {
       root.playFirstResult = true
       root.searchText = query
       root.submitSearch()
+    }
+    // omarchy-shell aurora-pulse folder ~/Music/Albums/Blue   (play a folder)
+    function folder(path: string): void {
+      root.ensureOn()
+      var p = String(path || "").trim()
+      if (p.indexOf("~/") === 0) p = Quickshell.env("HOME") + p.slice(1)
+      root.openFolderPath(p, "play")
+    }
+    // omarchy-shell aurora-pulse openFolder ~/Music/Albums   (list it, without playing)
+    function openFolder(path: string): void {
+      root.open()
+      var p = String(path || "").trim()
+      if (p.indexOf("~/") === 0) p = Quickshell.env("HOME") + p.slice(1)
+      root.openFolderPath(p, "")
+    }
+    // omarchy-shell aurora-pulse screenshot   (the video frame, to Pictures › AuroraPulse)
+    function screenshot(): void { root.request("screenshot") }
+    // omarchy-shell aurora-pulse radio   (more like what is playing)
+    function radio(): void { if (root.hasItem) root.startRadio(root.item) }
+    // omarchy-shell aurora-pulse searchAll "burna boy"   (every source at once)
+    function searchAll(query: string): void {
+      root.open()
+      root.settingsOpen = false
+      root.browserView = "all"
+      root.searchAll(query)
+    }
+    // omarchy-shell aurora-pulse pickFolder   (the folder chooser, then play)
+    function pickFolder(): void {
+      root.open()
+      root.pickFolder()
     }
     // omarchy-shell aurora-pulse view grid   (or list)
     function view(mode: string): void {

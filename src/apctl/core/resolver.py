@@ -225,12 +225,16 @@ def _ytdlp(argv, timeout=YTDLP_TIMEOUT, offline_ok=False, listing=False):
     raise ResolveError("no playable stream was offered for that", "expired")
 
 
-def search(query, limit=20, music=False, timeout=YTDLP_TIMEOUT, offset=0):
+def search(query, limit=20, music=False, timeout=YTDLP_TIMEOUT, offset=0,
+           playlists=False):
     """Search YouTube or YouTube Music. Returns raw yt-dlp entries.
 
     `offset` skips that many results: the search is asked for offset+limit
     and only the window after the offset is extracted, so "load more" is a
     page of new results rather than the first page again.
+
+    `playlists` searches YouTube's results page with its Playlists filter:
+    `ytsearch` only ever returns videos.
     """
     query = textutil.text(query, 200)
     if not query:
@@ -240,6 +244,13 @@ def search(query, limit=20, music=False, timeout=YTDLP_TIMEOUT, offset=0):
     limit = max(1, min(50, int(limit)))
     offset = max(0, min(450, int(offset)))
     target = "ytsearch%d:%s" % (offset + limit, query)
+    if playlists:
+        from urllib.parse import quote
+        target = ("https://www.youtube.com/results?search_query=%s&sp=EgIQAw%%3D%%3D"
+                  % quote(query))
+        window = ["--playlist-items", "%d:%d" % (offset + 1, offset + limit)]
+        return _ytdlp(["--dump-single-json", "--flat-playlist", *window, target],
+                      timeout, listing=True)
     if music:
         target = "https://music.youtube.com/search?q=" + \
             query.replace(" ", "%20").replace("+", "%2B")

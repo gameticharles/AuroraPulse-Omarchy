@@ -50,7 +50,8 @@ Item {
 
   function playlistIcon(p) {
     return ({ "smart:most": Model.ICON.star, "smart:recent": Model.ICON.history,
-              "smart:added": Model.ICON.plus, "smart:favorites": Model.ICON.heart })[p.id]
+              "smart:added": Model.ICON.plus, "smart:favorites": Model.ICON.heart,
+              "smart:long": Model.ICON.timer })[p.id]
            || Model.ICON.playlistTv
   }
 
@@ -244,6 +245,14 @@ Item {
         onClicked: root.playlistCommand({ action: "play", playlist: root.playlistView.id })
       }
       IconButton {
+        icon: Model.ICON.exportFile
+        size: 26
+        colorFg: root.dim
+        enabled: root.rows.length > 0
+        tip: "Export as an M3U file (to Downloads)"
+        onClicked: root.playlistCommand({ action: "export", playlist: root.playlistView.id })
+      }
+      IconButton {
         visible: root.editable
         icon: Model.ICON.tune
         size: 26
@@ -280,7 +289,7 @@ Item {
       spacing: Style.space(4)
       C.InputField {
         id: newName
-        width: parent.width - createButton.width - Style.space(4)
+        width: parent.width - createButton.width - importButton.width - Style.space(8)
         placeholder: "New playlist name, then Enter"
         onAccepted: createButton.clicked()
       }
@@ -300,6 +309,17 @@ Item {
           root.playlistCommand({ action: "create", name: newName.text.trim() })
           newName.text = ""
         }
+      }
+      Ui.Button {
+        id: importButton
+        iconText: Model.ICON.importFile
+        tooltipText: "Import an M3U playlist file"
+        bordered: true
+        foreground: root.fg
+        accent: root.accent
+        iconSize: Style.font.caption
+        verticalPadding: Style.space(3)
+        onClicked: root.playlistCommand({ action: "pickImport" })
       }
     }
 

@@ -11,6 +11,7 @@ this module's job is to make it rare:
 """
 
 import os
+import re
 import time
 
 from ..core import resolver
@@ -157,29 +158,144 @@ def _listing(url, cache_dir, prefix, budget, limit, timeout=45):
     return out
 
 
-def playlist(playlist_id, cache_dir=None, limit=500, budget=None):
-    pid = textutil.text(playlist_id, 80)
+_LIST_ID = re.compile(r"(?:[?&]list=|^)([A-Za-z0-9_-]{10,64})(?:[&#]|$)")
+
+
+def playlist_id(text):
+    """The playlist id in a pasted link (`...?list=PL...`), or a bare id.
+
+    Watch links that carry a `list=` count too: the user copied the address
+    while a playlist was playing and wants the playlist, not the one video.
+    Returns "" for anything else.
+    """
+    raw = textutil.text(text, 2048).strip()
+    if not raw:
+        return ""
+    if raw.startswith(("http://", "https://")):
+        if not resolver.is_youtube_url(raw):
+            return ""
+        query = raw.split("?", 1)[1] if "?" in raw else ""
+        match = _LIST_ID.search("?" + query)
+        return match.group(1) if match else ""
+    # A bare id must look like one, or every one-word search is a playlist.
+    if " " in raw or not _LIST_ID.fullmatch(raw):
+        return ""
+    if raw.startswith("VLPL") or raw.startswith("VLRD") or raw.startswith("VLOL"):
+        return raw[2:]
+    return raw if raw[:2] in ("PL", "OL", "RD", "UU", "FL") else ""
+
+
+def playlist_item(entry, source="youtube"):
+    """A playlist search result: a row the panel opens, not a track."""
+    pid = textutil.text(entry.get("id"), 64)
+    if not pid:
+        pid = playlist_id(entry.get("url") or "")
+    title = textutil.text(entry.get("title"), 400)
+    if not pid or not title:
+        return None
+    channel = textutil.text(entry.get("uploader") or entry.get("channel"), 200)
+    thumb = _thumb(entry)
+    count = int(entry.get("playlist_count") or 0)
+    host = "music.youtube.com" if source == "music" else "www.youtube.com"
+    return item(
+        source, "%s-pl-%s" % ("ym" if source == "music" else "yt", pid), title,
+        url="https://%s/playlist?list=%s" % (host, pid),
+        kind="playlist",
+        artist=channel,
+        art=art_for(thumb, "ytpl-%s" % pid, _fetcher()),
+        extra={"playlist_id": pid, "channel": channel, "count": count,
+               "thumbnail": textutil.text(thumb, 2048)},
+    )
+
+
+def search_playlists(query, limit=20, offset=0):
+    """Playlists matching a search, from YouTube's Playlists filter."""
+    query = textutil.text(query, 200)
+    if not query:
+        raise SourceError("type something to search for", "empty")
+    if offset >= 500:
+        return []
+    try:
+        raw = resolver.search(query, limit=limit, offset=offset, playlists=True)
+    except resolver.ResolveError as exc:
+        raise SourceError(str(exc), exc.reason) from exc
+    out = []
+    for entry in _entries(raw):
+        if entry.get("ie_key") not in (None, "YoutubeTab"):
+            continue
+        built = playlist_item(entry)
+        if built:
+            out.append(built)
+    return out
+
+
+def playlist(playlist_id_or_url, cache_dir=None, limit=500, budget=None):
+    """Every video in a playlist, from its id or any link that names it."""
+    pid = playlist_id(playlist_id_or_url)
     if not pid:
         raise SourceError("that is not a playlist", "unsupported")
-    url = pid if pid.startswith("http") else \
-        "https://www.youtube.com/playlist?list=%s" % pid
-    return _listing(url, cache_dir, "yt-pl", budget, limit)
+    return _listing("https://www.youtube.com/playlist?list=%s" % pid,
+                    cache_dir, "yt-pl", budget, limit)
 
 
 def channel_feed(channel_id, cache_dir=None, limit=50, budget=None):
     """The uploads feed. Signing in is deliberately not supported: cookies in
     this plugin would be a much larger liability than a slightly smaller
     catalogue."""
-    cid = textutil.text(channel_id, 80)
+    cid = textutil.text(channel_id, 300).strip()
     if not cid:
         raise SourceError("that is not a channel", "unsupported")
-    if cid.startswith("http"):
-        url = cid
-    elif cid.startswith("UC"):
+    # A channel's page lists its tabs (Videos, Shorts, Live), not videos; its
+    # uploads playlist (UC... -> UU...) lists the videos, newest first.
+    found = re.search(r"/channel/(UC[A-Za-z0-9_-]{10,})", cid)
+    if found:
+        cid = found.group(1)
+    if cid.startswith("UC") and "/" not in cid:
         url = "https://www.youtube.com/playlist?list=UU%s" % cid[2:]
+    elif cid.startswith("http"):
+        if not resolver.is_youtube_url(cid):
+            raise SourceError("that is not a YouTube channel", "unsupported")
+        url = cid.split("?", 1)[0].rstrip("/")
+        if not url.endswith("/videos"):
+            url += "/videos"
+    elif cid.startswith("@"):
+        url = "https://www.youtube.com/%s/videos" % cid
     else:
-        url = "https://www.youtube.com/user/%s" % cid
+        url = "https://www.youtube.com/user/%s/videos" % cid
     return _listing(url, cache_dir, "yt-ch", budget, limit)
+
+
+MIX_SIZE = 40
+
+
+def mix(video_id, cache_dir=None, source="youtube", limit=MIX_SIZE):
+    """YouTube's own mix for a video ("more like this"), as a list.
+
+    The mix is only reachable from a watch link that carries it
+    (`watch?v=ID&list=RDID`); as a playlist link YouTube calls it
+    unviewable. Music's flavour (RDAMVM) is the same mix with songs in it.
+    """
+    vid = textutil.text(video_id, 32)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", vid or ""):
+        raise SourceError("there is nothing to start a mix from", "unsupported")
+    url = "https://www.youtube.com/watch?v=%s&list=RD%s%s" % (
+        vid, "AMVM" if source == "music" else "", vid)
+    try:
+        raw = resolver._ytdlp(["--dump-single-json", "--flat-playlist",
+                               "--playlist-items", "1:%d" % max(1, int(limit)), url],
+                              timeout=45, listing=True)
+    except resolver.ResolveError as exc:
+        raise SourceError(str(exc), exc.reason) from exc
+    out = []
+    for index, entry in enumerate(_entries(raw)):
+        if source == "music":
+            from .music import to_track
+            built = to_track(entry, cache_dir, index, "ym-mix")
+        else:
+            built = to_item(entry, cache_dir, index, "yt-mix")
+        if built and not built.get("is_live"):
+            out.append(built)
+    return out
 
 
 def subscriptions(cache_dir=None, limit=200, budget=None, store=None):

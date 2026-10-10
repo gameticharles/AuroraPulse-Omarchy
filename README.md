@@ -33,18 +33,27 @@ the Omarchy menu › Update › Omarchy.
   stations or import M3U, PLS, JSON or CSV.
 - **TV**: about 11,000 channels from iptv-org plus your own M3U playlists and
   channels, with a now/next guide and a full guide grid.
-- **YouTube** and **YouTube Music**: search with endless scrolling, playlists
-  and channels, video or audio only.
+- **YouTube** and **YouTube Music**: search with endless scrolling, video or
+  audio only. Search **playlists** too (and **albums** on Music), or paste a
+  playlist link: a playlist or album opens to every video or song in it, to
+  play all, shuffle, queue or save as one of your own playlists.
 - **Podcasts**: search the directory, subscribe by feed, play or download
   episodes.
 - **Local**: your music and video folders, browsed as songs, albums, artists,
-  genres or folders.
+  genres or folders. **Play a folder…** picks any folder on disk with the
+  desktop's folder chooser and plays everything in it, in name order.
 
 **Playing**
-- A queue across every source, kept across reboots.
-- Favourites, recently played, and **playlists**: your own (reorderable), plus
-  Most played, Recently played, Recently added and Favourites, which fill
-  themselves.
+- A queue across every source, kept across reboots: **play next**, save it as
+  a playlist, and **keep playing** when it runs out (more like the last
+  track: YouTube's mix, or the same artist in your library). **Start radio**
+  from any track.
+- **Search everything** at once: radio, TV, your library, podcasts, YouTube
+  and YouTube Music, grouped by source.
+- **Channel and artist pages** from any YouTube video or Music song.
+- Favourites, recently played, and **playlists**: your own (reorderable,
+  exported and imported as M3U), plus Most played, Recently played, Recently
+  added, Favourites and Long tracks, which fill themselves.
 - Resume long tracks where you left off; playback speed; repeat and shuffle.
 - **Sound**: equalizer presets or five custom bands, loudness levelling, fade
   between tracks, skip silence, and a remembered volume for each output
@@ -54,9 +63,14 @@ the Omarchy menu › Update › Omarchy.
   picture shape (16:9, 4:3, 21:9, fill); **picture quality** (SD, HD, Full HD)
   for channels that offer several, switched live and remembered; **subtitles**
   from YouTube, from the file or from a `.srt` beside it, with size and track
-  choice.
+  choice; the **audio language** when there are several; **screenshots**.
+- **TV**: dial a channel by its number; import a guide from an XMLTV file.
 - **Lyrics**: synced where available, click a line to seek, three text sizes,
-  save as an `.lrc` file.
+  nudge the timing, paste or type your own, save as an `.lrc` file.
+- **Tags**: edit a local file's title, artist, album, genre, year, track and
+  cover, without re-encoding it.
+- **Podcasts**: played and new episodes marked, alerts for new ones, and
+  automatic downloads if you want them.
 - **Record** a radio or TV stream to a file.
 - **Download** YouTube videos, songs and podcast episodes as MP4, MKV, WebM,
   MP3, M4A, Opus, FLAC or the original format, with artwork.
@@ -87,7 +101,8 @@ While the panel is open and no text box has focus:
 | M, S, F | mute, stop, favourite |
 | Q | the queue |
 | / | search (↓ goes back to the results) |
-| 1 – 5 | tabs |
+| 1 – 5 | tabs (on the TV tab, digits dial a channel) |
+| Backspace | back out of an open playlist, album, folder or group |
 | Esc | close |
 
 From a terminal or a key binding:
@@ -96,7 +111,13 @@ From a terminal or a key binding:
 omarchy-shell aurora-pulse toggle           # open or close the panel
 omarchy-shell aurora-pulse playPause        # also stop, next, previous, mute …
 omarchy-shell aurora-pulse tab local:albums # a tab, or a Local view
+omarchy-shell aurora-pulse tab music:albums # or youtube:playlists, music:playlists
 omarchy-shell aurora-pulse play "groove salad"
+omarchy-shell aurora-pulse folder ~/Music/Blue   # play a folder (openFolder lists it)
+omarchy-shell aurora-pulse pickFolder       # the folder chooser, then play
+omarchy-shell aurora-pulse searchAll "burna boy"  # every source at once
+omarchy-shell aurora-pulse radio            # more like what is playing
+omarchy-shell aurora-pulse screenshot       # the video frame, to Pictures
 omarchy-shell aurora-pulse settings health
 ```
 
