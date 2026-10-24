@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 import "components" as C
 import "Model.js" as Model
 
@@ -26,9 +27,9 @@ Item {
   signal settingChanged(string key, var value)
   signal command(string cmd, var args)
 
-  readonly property color fg: Color.popups.text
+  readonly property color fg: Commons.Color.popups.text
   readonly property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
-  readonly property color accent: Color.accent
+  readonly property color accent: Commons.Color.accent
 
   // home | general | radio | tv | podcasts | library | health
   property string page: "home"

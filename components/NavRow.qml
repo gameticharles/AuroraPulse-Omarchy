@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 
 // A row that opens a settings page, like the original app's "Radio
 // Settings", "TV & Streaming Settings" and "Media & Library Settings".
@@ -9,8 +10,8 @@ Rectangle {
   property string icon: ""
   property string label: ""
   property string help: ""
-  property color tint: Color.accent
-  readonly property color fg: Color.popups.text
+  property color tint: Commons.Color.accent
+  readonly property color fg: Commons.Color.popups.text
   signal clicked()
 
   Layout.fillWidth: true

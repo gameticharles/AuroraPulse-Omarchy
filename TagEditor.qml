@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
 
@@ -15,15 +16,15 @@ Rectangle {
   property var entry: null
   // A cover picture chosen with the file chooser, or "".
   property string art: ""
-  property color fg: Color.popups.text
+  property color fg: Commons.Color.popups.text
   property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
-  property color accent: Color.accent
+  property color accent: Commons.Color.accent
 
   signal save(string path, var fields, string art)
   signal pickArt()
 
   visible: !!entry
-  color: Color.popups.background
+  color: Commons.Color.popups.background
   radius: Style.cornerRadius
 
   readonly property var fieldNames: [

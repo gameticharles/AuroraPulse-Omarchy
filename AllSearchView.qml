@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
 
@@ -17,10 +18,10 @@ Item {
   property bool searching: false
   property var artByKey: ({})
   property string currentUid: ""
-  property color fg: Color.popups.text
+  property color fg: Commons.Color.popups.text
   property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
   property color faint: Qt.rgba(fg.r, fg.g, fg.b, 0.3)
-  property color accent: Color.accent
+  property color accent: Commons.Color.accent
 
   signal search(string text)
   signal activate(var entry, var list, int index)

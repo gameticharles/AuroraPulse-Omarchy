@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // A small text button. `danger` is for the ones that delete things.
 Rectangle {
@@ -9,7 +10,7 @@ Rectangle {
   property bool danger: false
   property bool primary: false
   property bool enabled: true
-  readonly property color tint: danger ? "#ff6b6b" : Color.accent
+  readonly property color tint: danger ? "#ff6b6b" : Commons.Color.accent
   signal clicked()
 
   implicitWidth: label.implicitWidth + 18

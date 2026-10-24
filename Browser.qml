@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
 
@@ -117,10 +118,10 @@ Item {
     else root.play(entry, index)
   }
 
-  property color fg: Color.popups.text
+  property color fg: Commons.Color.popups.text
   property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
   property color faint: Qt.rgba(fg.r, fg.g, fg.b, 0.3)
-  property color accent: Color.accent
+  property color accent: Commons.Color.accent
 
   readonly property string fontFamily: Style.font.family
   readonly property bool gridView: viewMode === "grid"
@@ -1753,7 +1754,7 @@ Item {
     width: dialLabel.implicitWidth + Style.space(36)
     height: dialLabel.implicitHeight + Style.space(24)
     radius: Style.cornerRadius
-    color: Color.popups.background
+    color: Commons.Color.popups.background
     border.width: 1
     border.color: root.accent
     z: 40

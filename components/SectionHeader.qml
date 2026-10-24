@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 
 // A group heading. Sized to sit between rows rather than shout.
 Text {
@@ -11,7 +12,7 @@ Text {
   Layout.topMargin: 14
   Layout.bottomMargin: 2
   text: title
-  color: Qt.rgba(Color.popups.text.r, Color.popups.text.g, Color.popups.text.b, 0.45)
+  color: Qt.rgba(Commons.Color.popups.text.r, Commons.Color.popups.text.g, Commons.Color.popups.text.b, 0.45)
   font.pixelSize: 10
   font.bold: true
   font.capitalization: Font.AllUppercase

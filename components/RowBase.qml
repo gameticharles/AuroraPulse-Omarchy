@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 
 // Shared shape for a settings row: a label, an optional help line, and a
 // control on the right.
@@ -12,10 +13,10 @@ Item {
   id: root
   property string label: ""
   property string help: ""
-  readonly property color fg: Color.popups.text
+  readonly property color fg: Commons.Color.popups.text
   readonly property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.55)
   readonly property color faint: Qt.rgba(fg.r, fg.g, fg.b, 0.12)
-  readonly property color accent: Color.accent
+  readonly property color accent: Commons.Color.accent
   // Width kept free on the right for the row's control.
   property real controlWidth: 170
 

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 
 // One entry in a managed list - a station, a channel, a playlist, a folder -
 // with an optional on/off box and a remove button.
@@ -12,7 +13,7 @@ Rectangle {
   property bool checked: true
   property bool removable: true
   property bool confirmRemove: false
-  readonly property color fg: Color.popups.text
+  readonly property color fg: Commons.Color.popups.text
   signal toggled(bool value)
   signal removed()
 
@@ -39,7 +40,7 @@ Rectangle {
     anchors.verticalCenter: parent.verticalCenter
     width: visible ? 18 : 0
     text: root.checked ? String.fromCodePoint(0xF0132) : String.fromCodePoint(0xF0131)
-    color: root.checked ? Color.accent : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.45)
+    color: root.checked ? Commons.Color.accent : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.45)
     font.family: Style.font.family
     font.pixelSize: 16
     MouseArea {

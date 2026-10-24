@@ -8,6 +8,7 @@ import Quickshell.Io
 import qs.Ui
 import qs.Ui as Ui
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // AuroraPulse: one bar widget, one daemon, one player.
@@ -290,13 +291,13 @@ Panel {
 
   // ---------------------------------------------------------------- theme
 
-  readonly property color fg: bar ? bar.barForeground : Color.foreground
-  readonly property color accent: Color.accent
+  readonly property color fg: bar ? bar.barForeground : Commons.Color.foreground
+  readonly property color accent: Commons.Color.accent
   readonly property string fontFamily: Style.font.family
-  readonly property color surface: Qt.rgba(Color.popups.background.r,
-                                           Color.popups.background.g,
-                                           Color.popups.background.b, 1)
-  readonly property color panelFg: Color.popups.text
+  readonly property color surface: Qt.rgba(Commons.Color.popups.background.r,
+                                           Commons.Color.popups.background.g,
+                                           Commons.Color.popups.background.b, 1)
+  readonly property color panelFg: Commons.Color.popups.text
   readonly property color panelDim: Qt.rgba(panelFg.r, panelFg.g, panelFg.b, 0.55)
   readonly property color panelFaint: Qt.rgba(panelFg.r, panelFg.g, panelFg.b, 0.30)
   readonly property color panelPaper: Model.mix(surface, panelFg, 0.07)
@@ -1709,7 +1710,7 @@ Panel {
                    : Model.ICON.play)
           color: root.hasItem && !root.paused
                  ? root.nowSource.color
-                 : (root.bar ? root.bar.barForeground : Color.foreground)
+                 : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
           opacity: root.poweredOff ? 0.45 : 1
           font.family: Style.font.family
           font.pixelSize: 15
@@ -1783,7 +1784,7 @@ Panel {
 
       Text {
         text: root.barTitle
-        color: root.bar ? root.bar.barForeground : Color.foreground
+        color: root.bar ? root.bar.barForeground : Commons.Color.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         opacity: root.paused ? 0.55 : 1

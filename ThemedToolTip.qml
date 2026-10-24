@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 // The shell's own tooltip look - the one the browser tabs get from Ui.Button:
@@ -15,7 +16,7 @@ ToolTip {
 
   property real maxWidth: 360
   readonly property var borderSpec: Border.localOrSurfaceSpec(
-      "tooltip", "border", Color.tooltip.border, Color.tooltip.border,
+      "tooltip", "border", Commons.Color.tooltip.border, Commons.Color.tooltip.border,
       Math.max(1, Style.normalBorderWidth))
 
   delay: 400
@@ -23,7 +24,7 @@ ToolTip {
   width: Math.min(implicitWidth, maxWidth)
 
   background: Ui.BorderSurface {
-    color: Color.tooltip.background
+    color: Commons.Color.tooltip.background
     borderSpec: root.borderSpec
     radius: 0
   }
@@ -31,7 +32,7 @@ ToolTip {
   contentItem: Text {
     textFormat: Text.PlainText
     text: root.text
-    color: Color.tooltip.text
+    color: Commons.Color.tooltip.text
     wrapMode: Text.Wrap
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall

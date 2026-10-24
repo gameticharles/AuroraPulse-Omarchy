@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // A loading spinner, and the glyph shown in its place when nothing is loading.
 //
@@ -15,7 +16,7 @@ Item {
   id: root
   property bool running: false
   property string idleText: ""
-  property color color: Color.popups.text
+  property color color: Commons.Color.popups.text
   property real size: 16
 
   implicitWidth: size

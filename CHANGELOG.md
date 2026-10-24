@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 Versions 1.0.0 to 1.5.0 were written up afterwards from the commit history.
 
+## [1.6.1] - 2026-10-23
+
+### Fixed
+
+- Aurora Pulse lost the Omarchy theme colours after the Omarchy 4.0.6 update (Qt
+  6.12). Qt 6.12 adds a global `Color` object to QtQuick that wins over the
+  imported `qs.Commons` singleton, so `Color.background`, `Color.accent` and
+  the rest were undefined and the plugin fell back to its hard-coded colours.
+  Every use is now qualified as `Commons.Color` (`import qs.Commons as
+  Commons`). Use the qualified form in new code; a bare `Color` means
+  QtQuick's.
+
 ## [1.6.0] - 2026-10-10
 
 ### Added
