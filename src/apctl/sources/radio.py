@@ -34,12 +34,9 @@ def set_catalogue(catalogue):
 _last_mirror = {"index": 0, "tried": []}
 
 MIRRORS = [
+    "https://all.api.radio-browser.info",
     "https://de1.api.radio-browser.info",
     "https://de2.api.radio-browser.info",
-    "https://fr1.api.radio-browser.info",
-    "https://at1.api.radio-browser.info",
-    "https://nl1.api.radio-browser.info",
-    "https://no1.api.radio-browser.info",
 ]
 
 # The server the user picked in settings, or "" for automatic. The same

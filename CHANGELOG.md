@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 Versions 1.0.0 to 1.5.0 were written up afterwards from the commit history.
 
+## [1.6.2] - 2026-10-23
+
+### Fixed
+
+- Network guard now skips unrouted address families on dual-stack hosts instead of
+  refusing the entire host on the first unrouted address (e.g. IPv6 addresses on
+  IPv4-only networks). TV and Radio sources now resolve properly on single-stack
+  connections ([#1](https://github.com/gameticharles/AuroraPulse-Omarchy/issues/1)).
+- Radio: refreshed `MIRRORS` list to remove defunct servers (`fr1`, `at1`, `nl1`, `no1`)
+  and include `all.api.radio-browser.info`.
+
 ## [1.6.1] - 2026-10-23
 
 ### Fixed

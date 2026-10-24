@@ -5,9 +5,11 @@ or:        ./ap-ctl selftest
 """
 
 import os
+import socket
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -235,6 +237,45 @@ class NetPolicy(unittest.TestCase):
         self.assertTrue(issubclass(netguard.HTTPStatus, netguard.Blocked))
         err = netguard.HTTPStatus(404, "https://x/y")
         self.assertEqual(err.status, 404)
+
+    @mock.patch("socket.getaddrinfo")
+    @mock.patch.object(netguard, "routes_to_this_machine")
+    def test_dual_stack_skips_unrouted_family(self, mock_routes, mock_gai):
+        """Dual-stack hosts on IPv4-only networks must use IPv4 rather than failing."""
+        mock_gai.return_value = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a01:4f8:1c1d:699::1", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("91.98.4.78", 443)),
+        ]
+        # Simulate IPv6 having no default route, IPv4 routed
+        mock_routes.side_effect = lambda addr: addr == "91.98.4.78"
+        vetted = netguard._resolve_public("example.com", 443, seconds=3)
+        self.assertEqual(vetted, [(socket.AF_INET, "91.98.4.78")])
+
+    @mock.patch("socket.getaddrinfo")
+    @mock.patch.object(netguard, "routes_to_this_machine")
+    def test_dual_stack_still_blocks_if_any_address_is_private(self, mock_routes, mock_gai):
+        """Security: non-public IP addresses must still strictly raise Blocked."""
+        mock_gai.return_value = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("91.98.4.78", 443)),
+        ]
+        mock_routes.return_value = True
+        with self.assertRaises(netguard.Blocked) as caught:
+            netguard._resolve_public("example.com", 443, seconds=3)
+        self.assertIn("not the public internet", str(caught.exception))
+
+    @mock.patch("socket.getaddrinfo")
+    @mock.patch.object(netguard, "routes_to_this_machine")
+    def test_all_unrouted_addresses_raises_blocked(self, mock_routes, mock_gai):
+        """When no addresses route anywhere, Blocked is raised."""
+        mock_gai.return_value = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a01:4f8:1c1d:699::1", 443)),
+        ]
+        mock_routes.return_value = False
+        with self.assertRaises(netguard.Blocked) as caught:
+            netguard._resolve_public("example.com", 443, seconds=3)
+        self.assertIn("would not leave through a default route", str(caught.exception))
+
 
 
 class Seccomp(unittest.TestCase):

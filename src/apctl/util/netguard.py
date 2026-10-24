@@ -216,16 +216,22 @@ def _resolve_public(host, port, seconds):
         raise Blocked("could not resolve %s" % host)
 
     vetted = []
+    unrouted = []
     for family, _type, _proto, _canon, sockaddr in holder["infos"]:
         address = sockaddr[0]
         if not public_ip(address):
             raise Blocked("%s resolves to %s, which is not the public internet"
                           % (host, address))
         if not routes_to_this_machine(address):
-            raise Blocked("%s (%s) would not leave through a default route"
-                          % (host, address))
-        vetted.append((family, address))
+            unrouted.append(address)
+            continue
+        pair = (family, address)
+        if pair not in vetted:
+            vetted.append(pair)
     if not vetted:
+        if unrouted:
+            raise Blocked("%s (%s) would not leave through a default route"
+                          % (host, unrouted[0]))
         raise Blocked("%s has no usable address" % host)
     return vetted
 
